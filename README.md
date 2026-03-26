@@ -1,13 +1,13 @@
 # bitcoin-shard-proxy
 
-A high-throughput UDP proxy that receives BSV (Bitcoin SV) transaction
+A high-throughput UDP proxy that receives Bitcoin SV (BSV Blockchain) transaction
 datagrams, derives an IPv6 multicast group address from the transaction ID,
 and retransmits each datagram to the derived group for delivery to a subset
 of subscribers.
 
 ## How it works
 
-Each incoming datagram carries a raw BSV transaction wrapped in a compact
+Each incoming datagram carries a raw Bitcoin SV transaction wrapped in a compact
 fixed-size header. The proxy reads the top N bits of the transaction ID
 (configurable via `--shard-bits`), maps those bits to one of 2ᴺ IPv6
 multicast group addresses, and forwards the original datagram verbatim to
@@ -64,7 +64,7 @@ protocol), not the reversed display order shown by block explorers.
 ## Requirements
 
 - Go 1.26.1 or later
-- Linux kernel 3.9+ (for `SO_REUSEPORT`)
+- Linux kernel 3.9+, FreeBSD 12.3+ (for `SO_REUSEPORT`)
 - IPv6 enabled on the egress interface
 - Multicast routing / MLD snooping configured for your subscriber fabric
 
