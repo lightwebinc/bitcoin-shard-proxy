@@ -158,7 +158,7 @@ Each subscriber calls `IPV6_JOIN_GROUP` (or `setsockopt MCAST_JOIN_GROUP`)
 for the multicast group address(es) covering its desired shard range:
 
 ```text
-FF05::<group_index>                    # Default format
+FF05::<group_index>                   # Default format
 FF05:2001:db8:1234::<group_index>     # With assigned address space
 ```
 
@@ -186,4 +186,4 @@ bitcoin-shard-proxy/
 
 ## License
 
-See LICENSE file.
+Apache 2.0 - See LICENSE file.
