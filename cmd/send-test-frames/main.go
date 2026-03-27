@@ -3,11 +3,13 @@
 //
 // Usage:
 //
-//	send-test-frames [-addr host:port] [-count N] [-interval ms] [-shard-bits N]
+//	send-test-frames [-addr host:port] [-count N] [-interval ms] [-shard-bits N] [-spread]
 //
-// Each frame's txid prefix increments by 1, fanning traffic across all shard
-// groups. The predicted destination multicast group is printed for each frame
-// so output can be compared against recv-test-frames.
+// Each frame's txid prefix increments by 1, fanning traffic across shard groups.
+// With -spread, exactly one frame is sent per group using maximally-spaced txids,
+// guaranteeing full coverage regardless of -count. The predicted destination
+// multicast group is printed for each frame so output can be compared against
+// recv-test-frames.
 package main
 
 import (
@@ -26,7 +28,8 @@ func main() {
 	addr := flag.String("addr", "[::1]:9000", "proxy listen address (host:port)")
 	count := flag.Int("count", 16, "number of frames to send (0 = infinite)")
 	intervalMs := flag.Int("interval", 200, "milliseconds between frames")
-	shardBits := flag.Uint("shard-bits", 8, "shard-bits the proxy is configured with (for predicted group display)")
+	shardBits := flag.Uint("shard-bits", 2, "shard-bits the proxy is configured with (for predicted group display)")
+	spread := flag.Bool("spread", false, "send exactly one frame per group with maximally-spaced txids (ignores -count)")
 	flag.Parse()
 
 	conn, err := net.Dial("udp6", *addr)
@@ -40,28 +43,43 @@ func main() {
 	buf := make([]byte, frame.HeaderSize+len(payload))
 	interval := time.Duration(*intervalMs) * time.Millisecond
 
-	fmt.Printf("sending to %s  shard_bits=%d\n\n", *addr, *shardBits)
+	fmt.Printf("sending to %s  shard_bits=%d  spread=%v\n\n", *addr, *shardBits, *spread)
 	fmt.Printf("%-6s  %-10s  %-6s  %s\n", "frame", "txid[0:4]", "group", "expected_dst")
+
+	if *spread {
+		// Send exactly one frame per group. The txid prefix for group g is
+		// g << (32 - shardBits), placing g in the top shardBits bits.
+		numGroups := int(e.NumGroups())
+		step := uint32(1) << (32 - *shardBits)
+		for g := 0; g < numGroups; g++ {
+			f := &frame.Frame{Payload: payload}
+			txidPrefix := uint32(g) * step
+			binary.BigEndian.PutUint32(f.TxID[0:4], txidPrefix)
+			sendFrame(conn, e, f, buf, g, interval)
+		}
+		return
+	}
 
 	for i := 0; *count == 0 || i < *count; i++ {
 		f := &frame.Frame{Payload: payload}
 		binary.BigEndian.PutUint32(f.TxID[0:4], uint32(i))
+		sendFrame(conn, e, f, buf, i, interval)
+	}
+}
 
-		n, err := frame.Encode(f, buf)
-		if err != nil {
-			log.Fatalf("encode frame %d: %v", i, err)
-		}
-		if _, err := conn.Write(buf[:n]); err != nil {
-			log.Fatalf("send frame %d: %v", i, err)
-		}
-
-		groupIdx := e.GroupIndex(&f.TxID)
-		dst := e.Addr(groupIdx, 9001)
-		fmt.Printf("%-6d  %08X    %-6d  %s\n",
-			i, binary.BigEndian.Uint32(f.TxID[0:4]), groupIdx, dst.IP)
-
-		if interval > 0 {
-			time.Sleep(interval)
-		}
+func sendFrame(conn net.Conn, e *shard.Engine, f *frame.Frame, buf []byte, seq int, interval time.Duration) {
+	n, err := frame.Encode(f, buf)
+	if err != nil {
+		log.Fatalf("encode frame %d: %v", seq, err)
+	}
+	if _, err := conn.Write(buf[:n]); err != nil {
+		log.Fatalf("send frame %d: %v", seq, err)
+	}
+	groupIdx := e.GroupIndex(&f.TxID)
+	dst := e.Addr(groupIdx, 9001)
+	fmt.Printf("%-6d  %08X    %-6d  %s\n",
+		seq, binary.BigEndian.Uint32(f.TxID[0:4]), groupIdx, dst.IP)
+	if interval > 0 {
+		time.Sleep(interval)
 	}
 }
