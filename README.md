@@ -293,6 +293,9 @@ sudo tcpdump -i lo0 -n -XX "ip6 and udp and (ip6[24] == 0xff)"
 - [ ] Add support for multiple interfaces
 - [ ] Add support for subtree-based sharding
 - [ ] Add support for specialized transaction filtering
+- [ ] Add support for forward error correction (FEC)
+- [ ] Add support for sequence numbering
+- [ ] Add support for Negative-ACK (NACK) based retransmission
 
 ## License
 
