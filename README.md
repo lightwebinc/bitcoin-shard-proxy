@@ -5,6 +5,8 @@ datagrams, derives an IPv6 multicast group address from the transaction ID,
 and retransmits each datagram to the derived group for delivery to a subset
 of subscribers.
 
+Inspiration: [Multicast within Multicast: Anycast](https://singulargrit.substack.com/p/multicast-within-multicast-anycast), [Multicast as the Only Viable Architecture](https://singulargrit.substack.com/p/multicast-as-the-only-viable-architecture)
+
 ## How it works
 
 Each incoming datagram carries a raw Bitcoin SV transaction wrapped in a compact
@@ -56,7 +58,7 @@ All multi-byte integers big-endian:
 | 7      | 1 B  | Reserved       | `0x00`                             |
 | 8      | 32 B | Transaction ID | Raw 256-bit txid (internal order)  |
 | 40     | 4 B  | Payload length | uint32, max 10 MiB                 |
-| 44     | var  | BSV tx payload | Raw serialised BSV transaction     |
+| 44     | var  | Tx payload     | Raw serialised BSV transaction     |
 
 The txid at offset 8 is in internal byte order (as used in the BSV P2P
 protocol), not the reversed display order shown by block explorers.
@@ -172,19 +174,19 @@ bitcoin-shard-proxy/
 ├── main.go                  Entry point, signal handling, worker lifecycle
 ├── cmd/
 │   ├── send-test-frames/
-│   │   └── main.go          Test sender: crafts BSV frames and sends to proxy
+│   │   └── main.go          Test sender: crafts transaction frames and sends to proxy
 │   └── recv-test-frames/
 │       └── main.go          Test receiver: joins multicast groups, prints frames
 ├── config/
 │   └── config.go            Flag + env parsing, validation
 ├── frame/
-│   ├── frame.go             BSV-over-UDP wire format encode/decode
+│   ├── frame.go             Wire format encode/decode
 │   └── frame_test.go
 ├── shard/
-│   ├── shard.go             txid → multicast address derivation
+│   ├── shard.go             Txid → multicast address derivation
 │   └── shard_test.go
 ├── worker/
-│   └── worker.go            Per-CPU SO_REUSEPORT receive/retransmit loop
+│   └── worker.go            Receive/retransmit loop
 ├── go.mod
 └── README.md
 ```
@@ -254,12 +256,13 @@ sudo tcpdump -i lo0 -n -XX "ip6 and udp and (ip6[24] == 0xff)"
 
 ## TODO
 
+- [ ] Lots of testing needed
 - [ ] Add metrics collection and reporting
 - [ ] Add health check endpoints
-- [ ] Add configuration reload support
 - [ ] Add more comprehensive logging
 - [ ] Add support for multiple interfaces
 - [ ] Add support for subtree-based sharding
+- [ ] Add support for specialized transaction filtering
 
 ## License
 
