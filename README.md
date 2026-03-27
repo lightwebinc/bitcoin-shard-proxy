@@ -73,7 +73,9 @@ protocol), not the reversed display order shown by block explorers.
 ## Build
 
 ```bash
-go build -o bitcoin-shard-proxy .
+make        # builds bitcoin-shard-proxy, send-test-frames, recv-test-frames
+make test   # runs unit tests
+make clean  # removes built binaries
 ```
 
 ## Run
@@ -232,8 +234,7 @@ go test ./frame/... ./shard/...
 ### Build the test tools
 
 ```bash
-go build -o send-test-frames ./cmd/send-test-frames/
-go build -o recv-test-frames ./cmd/recv-test-frames/
+make  # builds all binaries including send-test-frames and recv-test-frames
 ```
 
 ### Local integration test (loopback)
