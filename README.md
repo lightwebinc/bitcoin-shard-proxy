@@ -107,9 +107,10 @@ All flags accept environment variable equivalents (see Configuration below).
 
 | `SHARD_BITS` | Groups     | Typical use case                        |
 |-------------|------------|-----------------------------------------|
+| 2           | 4          | Ultra small; testing only               |
+| 4           | 16         | Very small deployment; single switch    |
 | 8           | 256        | Small lab; fits any managed switch      |
 | 12          | 4,096      | Mid-scale; fits most enterprise ASICs   |
-| 16          | 65,536     | Standard deployment                     |
 | 24          | 16,777,216 | Maximum precision; large TCAM required  |
 
 ### Multicast scope
@@ -117,7 +118,9 @@ All flags accept environment variable equivalents (see Configuration below).
 Use `site` (FF05::/16) for closed subscriber fabrics — MLD joins do not
 cross router boundaries unless inter-domain multicast is explicitly
 configured. Use `global` (FF0E::/16) only if subscribers span BGP domains
-with PIM-SM or MSDP in the path.
+with PIM-SM or MSDP in the path. There are no known global multicast
+deployments on the public internet, and thus only `site` scope should be
+used, currently.
 
 ### Assigned address space
 
@@ -164,8 +167,35 @@ FF05::<group_index>                   # Default format
 FF05:2001:db8:1234::<group_index>     # With assigned address space
 ```
 
-With `SHARD_BITS=16` a subscriber covering 1% of transaction volume joins
-approximately 655 groups — well within any modern MLD table.
+`SHARD_BITS` is a fixed, deployment-wide setting shared by all subscribers.
+Doubling `SHARD_BITS` splits every existing group into two children — subscribers
+join additional groups without invalidating existing ones, so scale-up requires
+no redesign.
+
+**`SHARD_BITS=2`** (4 groups — functional testing, join all groups):
+
+```bash
+./recv-test-frames -iface lo0 -port 9001 -groups "ff02::0,ff02::1,ff02::2,ff02::3"
+./send-test-frames -addr "[::1]:9000" -shard-bits 2 -spread
+```
+
+**`SHARD_BITS=4`** (16 groups — small deployment, join a quarter for 25% coverage):
+
+```bash
+./recv-test-frames -iface lo0 -port 9001 -groups "ff02::0,ff02::1,ff02::2,ff02::3"
+./send-test-frames -addr "[::1]:9000" -shard-bits 4 -spread
+```
+
+**`SHARD_BITS=8`** (256 groups — small lab, join 26 groups for ~10% coverage):
+
+```bash
+./recv-test-frames -iface lo0 -port 9001 \
+  -groups "ff02::0,ff02::1,ff02::2,ff02::3,ff02::4,ff02::5,ff02::6,ff02::7,ff02::8,ff02::9,ff02::a,ff02::b,ff02::c,ff02::d,ff02::e,ff02::f,ff02::10,ff02::11,ff02::12,ff02::13,ff02::14,ff02::15,ff02::16,ff02::17,ff02::18,ff02::19"
+./send-test-frames -addr "[::1]:9000" -shard-bits 8 -spread
+```
+
+The `-spread` flag sends exactly one frame per group with maximally-spaced txids,
+guaranteeing full coverage verification at any `SHARD_BITS` value.
 
 ## Package structure
 
