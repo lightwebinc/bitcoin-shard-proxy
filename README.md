@@ -71,7 +71,7 @@ protocol), not the reversed display order shown by block explorers.
 ## Build
 
 ```bash
-go build -o bitcoin-shard-proxy ./cmd/bitcoin-shard-proxy/
+go build -o bitcoin-shard-proxy .
 ```
 
 ## Run
@@ -169,19 +169,87 @@ approximately 655 groups — well within any modern MLD table.
 
 ```text
 bitcoin-shard-proxy/
-├── cmd/bitcoin-shard-proxy/
-│   └── main.go          Entry point, signal handling, worker lifecycle
-├── internal/
-│   ├── config/
-│   │   └── config.go    Flag + env parsing, validation
-│   ├── frame/
-│   │   └── frame.go     BSV-over-UDP wire format encode/decode
-│   ├── shard/
-│   │   └── shard.go     txid → multicast address derivation
-│   └── worker/
-│       └── worker.go    Per-CPU SO_REUSEPORT receive/retransmit loop
+├── main.go                  Entry point, signal handling, worker lifecycle
+├── cmd/
+│   ├── send-test-frames/
+│   │   └── main.go          Test sender: crafts BSV frames and sends to proxy
+│   └── recv-test-frames/
+│       └── main.go          Test receiver: joins multicast groups, prints frames
+├── config/
+│   └── config.go            Flag + env parsing, validation
+├── frame/
+│   ├── frame.go             BSV-over-UDP wire format encode/decode
+│   └── frame_test.go
+├── shard/
+│   ├── shard.go             txid → multicast address derivation
+│   └── shard_test.go
+├── worker/
+│   └── worker.go            Per-CPU SO_REUSEPORT receive/retransmit loop
 ├── go.mod
 └── README.md
+```
+
+## Testing
+
+### Unit tests
+
+```bash
+go test ./frame/... ./shard/...
+```
+
+### Build the test tools
+
+```bash
+go build -o send-test-frames ./cmd/send-test-frames/
+go build -o recv-test-frames ./cmd/recv-test-frames/
+```
+
+### Local integration test (loopback)
+
+Run each command in a separate terminal. Use `lo` instead of `lo0` on Linux.
+
+**Terminal 1 — start the proxy in debug mode:**
+
+```bash
+./bitcoin-shard-proxy -iface lo0 -shard-bits 8 -scope link \
+  -listen-port 9000 -egress-port 9001 -debug
+```
+
+**Terminal 2 — join the first four shard groups:**
+
+```bash
+./recv-test-frames -iface lo0 -port 9001 \
+  -groups "ff02::0,ff02::1,ff02::2,ff02::3"
+```
+
+**Terminal 3 — send 16 frames (one per group at 8 bits):**
+
+```bash
+./send-test-frames -addr "[::1]:9000" -shard-bits 8 -count 16 -interval 100
+```
+
+The sender prints the expected destination group for each frame. The receiver
+prints each frame as it arrives. The `group=` values must match.
+
+### Watch traffic with tcpdump
+
+Capture all IPv6 multicast UDP on the loopback (byte 24 of an IPv6 packet is
+the first byte of the destination address; `0xff` matches all multicast):
+
+```bash
+sudo tcpdump -i lo0 -n "ip6 and udp and (ip6[24] == 0xff)"
+```
+
+Filter for a specific shard group, e.g. `ff02::3`:
+
+```bash
+sudo tcpdump -i lo0 -n "ip6 dst ff02::3 and udp"
+```
+
+Full hex dump for manual frame inspection:
+
+```bash
+sudo tcpdump -i lo0 -n -XX "ip6 and udp and (ip6[24] == 0xff)"
 ```
 
 ## TODO

@@ -40,8 +40,8 @@ import (
 
 	"golang.org/x/sys/unix"
 
-	"github.com/jefflightweb/bitcoin-shard-proxy/internal/frame"
-	"github.com/jefflightweb/bitcoin-shard-proxy/internal/shard"
+	"github.com/jefflightweb/bitcoin-shard-proxy/frame"
+	"github.com/jefflightweb/bitcoin-shard-proxy/shard"
 )
 
 const (
