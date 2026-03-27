@@ -184,6 +184,15 @@ bitcoin-shard-proxy/
 └── README.md
 ```
 
+## TODO
+
+- [ ] Add metrics collection and reporting
+- [ ] Add health check endpoints
+- [ ] Add configuration reload support
+- [ ] Add more comprehensive logging
+- [ ] Add support for multiple interfaces
+- [ ] Add support for subtree-based sharding
+
 ## License
 
 Apache 2.0 - See LICENSE file.
