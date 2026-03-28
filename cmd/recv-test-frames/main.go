@@ -48,7 +48,11 @@ func main() {
 				log.Printf("join %s on %s: %v", group, ifi.Name, err)
 				return
 			}
-			defer conn.Close()
+			defer func() {
+				if err := conn.Close(); err != nil {
+					log.Printf("close conn %s: %v", group, err)
+				}
+			}()
 			log.Printf("joined %-20s on %s", group, ifi.Name)
 			recvLoop(conn, group)
 		}(g)

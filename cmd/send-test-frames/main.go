@@ -36,7 +36,11 @@ func main() {
 	if err != nil {
 		log.Fatalf("dial %s: %v", *addr, err)
 	}
-	defer conn.Close()
+	defer func() {
+		if err := conn.Close(); err != nil {
+			log.Printf("close conn: %v", err)
+		}
+	}()
 
 	e := shard.New(0xFF05, [11]byte{}, *shardBits)
 	payload := []byte("test-bsv-transaction-payload")

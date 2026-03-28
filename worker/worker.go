@@ -125,12 +125,18 @@ func (w *Worker) Run(listenAddr string, listenPort int, done <-chan struct{}) er
 	if err != nil {
 		return fmt.Errorf("worker %d: FilePacketConn: %w", w.id, err)
 	}
-	defer conn.Close()
+	defer func() {
+		if err := conn.Close(); err != nil {
+			w.log.Warn("close ingress conn", "err", err)
+		}
+	}()
 
 	// Close the ingress socket when done is signalled, unblocking ReadFrom.
 	go func() {
 		<-done
-		conn.Close()
+		if err := conn.Close(); err != nil {
+			w.log.Warn("close ingress conn on shutdown", "err", err)
+		}
 	}()
 
 	// WriteTo is used for each outgoing multicast datagram.
@@ -138,7 +144,11 @@ func (w *Worker) Run(listenAddr string, listenPort int, done <-chan struct{}) er
 	if err != nil {
 		return fmt.Errorf("worker %d: egress ListenPacket: %w", w.id, err)
 	}
-	defer egressConn.Close()
+	defer func() {
+		if err := egressConn.Close(); err != nil {
+			w.log.Warn("close egress conn", "err", err)
+		}
+	}()
 
 	udpEgress := egressConn.(*net.UDPConn)
 
@@ -148,7 +158,11 @@ func (w *Worker) Run(listenAddr string, listenPort int, done <-chan struct{}) er
 	if err != nil {
 		return fmt.Errorf("worker %d: get UDP file descriptor: %w", w.id, err)
 	}
-	defer egressFile.Close()
+	defer func() {
+		if err := egressFile.Close(); err != nil {
+			w.log.Warn("close egress file", "err", err)
+		}
+	}()
 
 	if err := unix.SetsockoptInt(int(egressFile.Fd()), unix.IPPROTO_IPV6, unix.IPV6_MULTICAST_IF, w.iface.Index); err != nil {
 		return fmt.Errorf("worker %d: SetMulticastInterface(%s): %w", w.id, w.iface.Name, err)
