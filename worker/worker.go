@@ -114,6 +114,9 @@ func (w *Worker) Run(listenAddr string, listenPort int, done <-chan struct{}) er
 	if err := unix.SetsockoptInt(fd, unix.SOL_SOCKET, unix.SO_RCVBUF, socketBufBytes); err != nil {
 		w.log.Warn("could not set SO_RCVBUF", "err", err)
 	}
+	if actual, err := unix.GetsockoptInt(fd, unix.SOL_SOCKET, unix.SO_RCVBUF); err == nil {
+		w.log.Debug("SO_RCVBUF", "requested_bytes", socketBufBytes, "actual_bytes", actual)
+	}
 
 	sa := &unix.SockaddrInet6{Port: listenPort}
 	if err := unix.Bind(fd, sa); err != nil {
@@ -194,7 +197,7 @@ func (w *Worker) Run(listenAddr string, listenPort int, done <-chan struct{}) er
 	}
 
 	for {
-		n, _, err := conn.ReadFrom(buf)
+		n, src, err := conn.ReadFrom(buf)
 		if err != nil {
 			if isClosedErr(err) {
 				return nil
@@ -206,10 +209,19 @@ func (w *Worker) Run(listenAddr string, listenPort int, done <-chan struct{}) er
 			continue
 		}
 
+		if n == RecvBufSize {
+			w.log.Warn("datagram fills recv buffer; may be truncated",
+				"src", src, "len", n)
+			if w.rec != nil {
+				w.rec.PacketDropped(w.iface.Name, w.id, "truncated")
+			}
+			continue
+		}
+
 		if w.rec != nil {
 			w.rec.PacketReceived(w.iface.Name, w.id, n)
 		}
-		w.process(udpEgress, buf[:n])
+		w.process(udpEgress, buf[:n], src)
 	}
 }
 
@@ -218,7 +230,7 @@ func (w *Worker) Run(listenAddr string, listenPort int, done <-chan struct{}) er
 // It decodes the BSV frame header, derives the destination multicast group
 // address from the txid prefix, and retransmits the original raw datagram
 // bytes verbatim to that address. No re-serialisation occurs.
-func (w *Worker) process(egress *net.UDPConn, raw []byte) {
+func (w *Worker) process(egress *net.UDPConn, raw []byte, src net.Addr) {
 	f, err := frame.Decode(raw)
 	if err != nil {
 		w.log.Debug("frame decode error", "err", err, "len", len(raw))
@@ -248,6 +260,7 @@ func (w *Worker) process(egress *net.UDPConn, raw []byte) {
 		w.log.Debug("forwarded",
 			"txid_prefix", fmt.Sprintf("%08X", groupIdx),
 			"group_idx", groupIdx,
+			"src", src,
 			"dst", dst,
 		)
 	}

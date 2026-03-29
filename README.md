@@ -50,15 +50,15 @@ or channel passing on the hot path.
 
 All multi-byte integers big-endian:
 
-| Offset | Size | Field          | Value                              |
-|--------|------|----------------|------------------------------------|
-| 0      | 4 B  | Network magic  | `0xE3E1F3E8` (BSV mainnet P2P)     |
-| 4      | 2 B  | Protocol ver   | `0x02BF` (703, BSV node baseline)  |
-| 6      | 1 B  | Frame version  | `0x01`                             |
-| 7      | 1 B  | Reserved       | `0x00`                             |
-| 8      | 32 B | Transaction ID | Raw 256-bit txid (internal order)  |
-| 40     | 4 B  | Payload length | uint32, max 10 MiB                 |
-| 44     | var  | Tx payload     | Raw serialised BSV transaction     |
+| Offset | Size | Field          | Value                             |
+| ------ | ---- | -------------- | --------------------------------- |
+| 0      | 4 B  | Network magic  | `0xE3E1F3E8` (BSV mainnet P2P)    |
+| 4      | 2 B  | Protocol ver   | `0x02BF` (703, BSV node baseline) |
+| 6      | 1 B  | Frame version  | `0x01`                            |
+| 7      | 1 B  | Reserved       | `0x00`                            |
+| 8      | 32 B | Transaction ID | Raw 256-bit txid (internal order) |
+| 40     | 4 B  | Payload length | uint32, max 10 MiB                |
+| 44     | var  | Tx payload     | Raw serialised BSV transaction    |
 
 The txid at offset 8 is in internal byte order (as used in the BSV P2P
 protocol), not the reversed display order shown by block explorers.
@@ -93,31 +93,31 @@ All flags accept environment variable equivalents (see Configuration below).
 
 ## Configuration
 
-| Flag | Env var | Default | Description |
-| --- | --- | --- | --- |
-| `-listen` | `LISTEN_ADDR` | `[::]` | Ingress bind address |
-| `-listen-port` | `LISTEN_PORT` | `9000` | UDP port for incoming BSV transaction frames |
-| `-iface` | `MULTICAST_IF` | `eth0` | NIC for multicast egress |
-| `-egress-port` | `EGRESS_PORT` | `9001` | Destination UDP port on multicast group addresses |
-| `-shard-bits` | `SHARD_BITS` | `2` | Bit width of the shard key (1-24) |
-| `-scope` | `MC_SCOPE` | `site` | Multicast scope: `link` / `site` / `org` / `global` |
-| `-mc-base-addr` | `MC_BASE_ADDR` | `""` | Base IPv6 address for assigned address space |
-| `-workers` | `NUM_WORKERS` | `NumCPU` | Worker goroutine count (0 = runtime.NumCPU) |
-| `-debug` | n/a | `false` | Per-packet debug logging + multicast loopback |
-| `-metrics-addr` | `METRICS_ADDR` | `:9100` | HTTP bind address for `/metrics`, `/healthz`, `/readyz` |
-| `-instance` | `INSTANCE_ID` | hostname | OTel `service.instance.id` for federation |
-| `-otlp-endpoint` | `OTLP_ENDPOINT` | `""` | OTLP gRPC push endpoint (empty = disabled) |
-| `-otlp-interval` | `OTLP_INTERVAL` | `30s` | OTLP push interval |
+| Flag             | Env var         | Default  | Description                                             |
+| ---------------- | --------------- | -------- | ------------------------------------------------------- |
+| `-listen`        | `LISTEN_ADDR`   | `[::]`   | Ingress bind address                                    |
+| `-listen-port`   | `LISTEN_PORT`   | `9000`   | UDP port for incoming BSV transaction frames            |
+| `-iface`         | `MULTICAST_IF`  | `eth0`   | NIC for multicast egress                                |
+| `-egress-port`   | `EGRESS_PORT`   | `9001`   | Destination UDP port on multicast group addresses       |
+| `-shard-bits`    | `SHARD_BITS`    | `2`      | Bit width of the shard key (1-24)                       |
+| `-scope`         | `MC_SCOPE`      | `site`   | Multicast scope: `link` / `site` / `org` / `global`     |
+| `-mc-base-addr`  | `MC_BASE_ADDR`  | `""`     | Base IPv6 address for assigned address space            |
+| `-workers`       | `NUM_WORKERS`   | `NumCPU` | Worker goroutine count (0 = runtime.NumCPU)             |
+| `-debug`         | n/a             | `false`  | Per-packet debug logging + multicast loopback           |
+| `-metrics-addr`  | `METRICS_ADDR`  | `:9100`  | HTTP bind address for `/metrics`, `/healthz`, `/readyz` |
+| `-instance`      | `INSTANCE_ID`   | hostname | OTel `service.instance.id` for federation               |
+| `-otlp-endpoint` | `OTLP_ENDPOINT` | `""`     | OTLP gRPC push endpoint (empty = disabled)              |
+| `-otlp-interval` | `OTLP_INTERVAL` | `30s`    | OTLP push interval                                      |
 
 ### Shard bits vs. group count
 
-| `SHARD_BITS` | Groups     | Typical use case                        |
-|--------------|------------|-----------------------------------------|
-| 2           | 4          | Ultra small; testing only               |
-| 4           | 16         | Very small deployment; single switch    |
-| 8           | 256        | Small lab; fits any managed switch      |
-| 12          | 4,096      | Mid-scale; fits most enterprise ASICs   |
-| 24          | 16,777,216 | Maximum precision; large TCAM required  |
+| `SHARD_BITS` | Groups     | Typical use case                       |
+| ------------ | ---------- | -------------------------------------- |
+| 2            | 4          | Ultra small; testing only              |
+| 4            | 16         | Very small deployment; single switch   |
+| 8            | 256        | Small lab; fits any managed switch     |
+| 12           | 4,096      | Mid-scale; fits most enterprise ASICs  |
+| 24           | 16,777,216 | Maximum precision; large TCAM required |
 
 ### Multicast scope
 
@@ -125,8 +125,7 @@ Use `site` (FF05::/16) for closed subscriber fabrics — MLD joins do not
 cross router boundaries unless inter-domain multicast is explicitly
 configured. Use `global` (FF0E::/16) only if subscribers span BGP domains
 with PIM-SM or MSDP in the path. There are no known global multicast
-deployments on the public internet, and thus only `site` scope should be
-used, currently.
+deployments on the public internet, and thus only `site` scope should be used, currently.
 
 ### Assigned address space
 
@@ -293,10 +292,10 @@ sudo tcpdump -i lo0 -n -XX "ip6 and udp and (ip6[24] == 0xff)"
 
 ## TODO
 
-- [ ] Lots of testing needed
+- [x] Test coverage
 - [x] Add metrics collection and reporting
 - [x] Add health check endpoints
-- [ ] Add more comprehensive logging
+- [x] Add more comprehensive logging
 - [ ] Add support for multiple interfaces
 - [ ] Add support for subtree-based sharding
 - [ ] Add support for specialized transaction filtering

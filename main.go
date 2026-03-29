@@ -96,6 +96,8 @@ func main() {
 		"iface", cfg.MulticastIF,
 		"debug", cfg.Debug,
 		"metrics_addr", cfg.MetricsAddr,
+		"instance_id", cfg.InstanceID,
+		"version", metrics.Version,
 	)
 
 	// done is closed to signal all workers to stop their receive loops.
@@ -145,6 +147,7 @@ func main() {
 	// Close done to unblock all worker receive loops and the metrics server,
 	// then flush any pending OTLP exports before waiting for workers to drain.
 	close(done)
+	shutStart := time.Now()
 
 	shutCtx, shutCancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer shutCancel()
@@ -152,5 +155,5 @@ func main() {
 
 	wg.Wait()
 
-	slog.Info("all workers stopped; exiting cleanly")
+	slog.Info("all workers stopped; exiting cleanly", "shutdown_elapsed", time.Since(shutStart).Round(time.Millisecond))
 }

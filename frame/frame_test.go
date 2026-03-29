@@ -2,6 +2,7 @@ package frame
 
 import (
 	"bytes"
+	"encoding/binary"
 	"io"
 	"testing"
 )
@@ -102,5 +103,25 @@ func TestEmptyPayload(t *testing.T) {
 func TestHeaderSize(t *testing.T) {
 	if HeaderSize != 44 {
 		t.Errorf("HeaderSize = %d, want 44", HeaderSize)
+	}
+}
+
+func TestEncodeErrTooLarge(t *testing.T) {
+	f := &Frame{Payload: make([]byte, MaxPayload+1)}
+	_, err := Encode(f, make([]byte, HeaderSize+MaxPayload+1))
+	if err != ErrTooLarge {
+		t.Errorf("want ErrTooLarge, got %v", err)
+	}
+}
+
+func TestDecodeErrTooLarge(t *testing.T) {
+	buf := make([]byte, HeaderSize)
+	buf[0], buf[1], buf[2], buf[3] = 0xE3, 0xE1, 0xF3, 0xE8
+	buf[6] = FrameVer
+	// Write a payLen that exceeds MaxPayload into bytes 40–43.
+	binary.BigEndian.PutUint32(buf[40:44], uint32(MaxPayload+1))
+	_, err := Decode(buf)
+	if err != ErrTooLarge {
+		t.Errorf("want ErrTooLarge, got %v", err)
 	}
 }

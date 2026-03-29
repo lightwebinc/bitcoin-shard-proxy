@@ -158,6 +158,7 @@ func New(instanceID string, numWorkers int, otlpEndpoint string, otlpInterval ti
 			),
 		))
 		shutdownFuncs = append(shutdownFuncs, otlpExp.Shutdown)
+		slog.Info("OTLP exporter enabled", "endpoint", otlpEndpoint, "interval", otlpInterval)
 	}
 
 	mp := sdkmetric.NewMeterProvider(mpOpts...)
