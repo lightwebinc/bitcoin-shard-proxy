@@ -8,7 +8,7 @@
 //	Flag             Env var          Default       Description
 //	-listen          LISTEN_ADDR      [::]          Ingress bind address
 //	-listen-port     LISTEN_PORT      9000          UDP listen port
-//	-iface           MULTICAST_IF     eth0          NIC for multicast egress
+//	-iface           MULTICAST_IF     eth0          Comma-separated NICs for multicast egress
 //	-egress-port     EGRESS_PORT      9001          Destination port on groups
 //	-shard-bits      SHARD_BITS       2             Key bit width (1–24)
 //	-scope           MC_SCOPE         site          Multicast scope
@@ -27,6 +27,7 @@ import (
 	"os"
 	"runtime"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -48,10 +49,10 @@ var Scopes = map[string]uint16{
 // after [Load] returns; treat the value as immutable.
 type Config struct {
 	// Network
-	ListenAddr  string // e.g. "[::]"
-	ListenPort  int    // UDP port to receive BSV transaction frames
-	MulticastIF string // NIC name for multicast egress, e.g. "eth0"
-	EgressPort  int    // Destination UDP port written into outgoing multicast datagrams
+	ListenAddr   string   // e.g. "[::]"
+	ListenPort   int      // UDP port to receive BSV transaction frames
+	EgressIfaces []string // NIC names for multicast egress, e.g. ["eth0", "eth1"]
+	EgressPort   int      // Destination UDP port written into outgoing multicast datagrams
 
 	// Sharding
 	ShardBits     uint     // Number of txid prefix bits used as the group key (1–24)
@@ -85,8 +86,8 @@ func Load() (*Config, error) {
 		"ingress bind address (without port)")
 	flag.IntVar(&c.ListenPort, "listen-port", envInt("LISTEN_PORT", 9000),
 		"UDP listen port for incoming BSV transaction frames")
-	flag.StringVar(&c.MulticastIF, "iface", envStr("MULTICAST_IF", "eth0"),
-		"network interface name for multicast egress")
+	ifaceFlag := flag.String("iface", envStr("MULTICAST_IF", "eth0"),
+		"comma-separated NIC names for multicast egress (e.g. eth0,eth1)")
 	flag.IntVar(&c.EgressPort, "egress-port", envInt("EGRESS_PORT", 9001),
 		"destination UDP port written into outgoing multicast datagrams")
 	flag.IntVar(&c.NumWorkers, "workers", envInt("NUM_WORKERS", runtime.NumCPU()),
@@ -156,9 +157,19 @@ func Load() (*Config, error) {
 		c.NumWorkers = runtime.NumCPU()
 	}
 
-	// Confirm the egress interface exists before the workers try to use it.
-	if _, err := net.InterfaceByName(c.MulticastIF); err != nil {
-		return nil, fmt.Errorf("multicast interface %q not found: %w", c.MulticastIF, err)
+	// Parse and validate egress interfaces.
+	for _, name := range strings.Split(*ifaceFlag, ",") {
+		name = strings.TrimSpace(name)
+		if name == "" {
+			continue
+		}
+		if _, err := net.InterfaceByName(name); err != nil {
+			return nil, fmt.Errorf("multicast interface %q not found: %w", name, err)
+		}
+		c.EgressIfaces = append(c.EgressIfaces, name)
+	}
+	if len(c.EgressIfaces) == 0 {
+		return nil, fmt.Errorf("at least one egress interface must be specified via -iface")
 	}
 
 	return c, nil

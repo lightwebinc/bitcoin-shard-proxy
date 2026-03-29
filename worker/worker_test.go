@@ -14,8 +14,8 @@ import (
 
 func TestNew(t *testing.T) {
 	engine := shard.New(0xFF05, [11]byte{}, 8)
-	iface := &net.Interface{Index: 1, Name: "lo"}
-	w := New(0, engine, iface, 9001, false, nil)
+	ifaces := []*net.Interface{{Index: 1, Name: "lo"}}
+	w := New(0, engine, ifaces, 9001, false, nil)
 	if w == nil {
 		t.Fatal("New returned nil")
 	}
@@ -35,8 +35,8 @@ func TestNew(t *testing.T) {
 
 func TestNewDebugMode(t *testing.T) {
 	engine := shard.New(0xFF05, [11]byte{}, 8)
-	iface := &net.Interface{Index: 1, Name: "lo"}
-	w := New(1, engine, iface, 9001, true, nil)
+	ifaces := []*net.Interface{{Index: 1, Name: "lo"}}
+	w := New(1, engine, ifaces, 9001, true, nil)
 	if !w.debug {
 		t.Error("debug should be true")
 	}
@@ -163,8 +163,17 @@ func openLoopbackUDP(t *testing.T) (*net.UDPConn, *net.UDPAddr) {
 func makeWorker(t *testing.T, debug bool) *Worker {
 	t.Helper()
 	engine := shard.New(0xFF05, [11]byte{}, 8)
-	iface := &net.Interface{Index: 1, Name: "lo"}
-	return New(0, engine, iface, 9001, debug, nil)
+	ifaces := []*net.Interface{{Index: 1, Name: "lo"}}
+	return New(0, engine, ifaces, 9001, debug, nil)
+}
+
+func makeTargets(t *testing.T, conns ...*net.UDPConn) []egressTarget {
+	t.Helper()
+	tgts := make([]egressTarget, len(conns))
+	for i, c := range conns {
+		tgts[i] = egressTarget{iface: &net.Interface{Index: i + 1, Name: fmt.Sprintf("lo%d", i)}, conn: c}
+	}
+	return tgts
 }
 
 func validFrame(t *testing.T) []byte {
@@ -186,26 +195,36 @@ func TestProcessValidFrame(t *testing.T) {
 	// process writes to egress; with a zero TxID the group index is 0 and the
 	// destination is a multicast addr that won't be reachable on loopback, but
 	// WriteTo is expected to fail gracefully — no panic.
-	w.process(egress, raw, fakeAddr{})
+	w.process(makeTargets(t, egress), raw, fakeAddr{})
 }
 
 func TestProcessValidFrameDebug(t *testing.T) {
 	egress, _ := openLoopbackUDP(t)
 	w := makeWorker(t, true)
 	raw := validFrame(t)
-	w.process(egress, raw, fakeAddr{})
+	w.process(makeTargets(t, egress), raw, fakeAddr{})
 }
 
 func TestProcessInvalidFrame(t *testing.T) {
 	egress, _ := openLoopbackUDP(t)
 	w := makeWorker(t, false)
 	// A buffer shorter than HeaderSize triggers ErrTooShort in frame.Decode.
-	w.process(egress, []byte{0x00, 0x01}, fakeAddr{})
+	w.process(makeTargets(t, egress), []byte{0x00, 0x01}, fakeAddr{})
 }
 
 func TestProcessBadMagic(t *testing.T) {
 	egress, _ := openLoopbackUDP(t)
 	w := makeWorker(t, false)
 	raw := make([]byte, 44) // all zeros — bad magic
-	w.process(egress, raw, fakeAddr{})
+	w.process(makeTargets(t, egress), raw, fakeAddr{})
+}
+
+func TestProcessMultipleTargets(t *testing.T) {
+	egress1, _ := openLoopbackUDP(t)
+	egress2, _ := openLoopbackUDP(t)
+	w := makeWorker(t, false)
+	raw := validFrame(t)
+	// Fan-out to two targets; both writes may fail gracefully on loopback
+	// multicast — no panic, no hang.
+	w.process(makeTargets(t, egress1, egress2), raw, fakeAddr{})
 }

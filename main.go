@@ -9,7 +9,7 @@
 //
 // # Quick start
 //
-//	bitcoin-shard-proxy -iface eth0 -shard-bits 16 -scope site
+//	bitcoin-shard-proxy -iface eth0,eth1 -shard-bits 16 -scope site
 //
 // # Configuration
 //
@@ -25,8 +25,10 @@
 //   - -scope (MC_SCOPE): multicast scope. Use "site" for closed subscriber
 //     fabrics; "global" only if subscribers span BGP domains.
 //
-//   - -iface (MULTICAST_IF): the NIC over which multicast datagrams are sent.
-//     Must exist on the host; the proxy exits immediately if not found.
+//   - -iface (MULTICAST_IF): comma-separated NIC names over which multicast
+//     datagrams are sent (e.g. eth0,eth1). Each datagram is forwarded to all
+//     listed interfaces in order. All names must exist on the host; the proxy
+//     exits immediately if any are not found.
 //
 // # Graceful shutdown
 //
@@ -69,11 +71,15 @@ func main() {
 		Level: logLevel,
 	})))
 
-	// Resolve the egress network interface once; workers share the *net.Interface.
-	iface, err := net.InterfaceByName(cfg.MulticastIF)
-	if err != nil {
-		slog.Error("multicast interface not found", "iface", cfg.MulticastIF, "err", err)
-		os.Exit(1)
+	// Resolve all egress interfaces once; workers share the []*net.Interface slice.
+	ifaces := make([]*net.Interface, 0, len(cfg.EgressIfaces))
+	for _, name := range cfg.EgressIfaces {
+		iface, err := net.InterfaceByName(name)
+		if err != nil {
+			slog.Error("multicast interface not found", "iface", name, "err", err)
+			os.Exit(1)
+		}
+		ifaces = append(ifaces, iface)
 	}
 
 	// Initialise the metrics recorder (Prometheus + optional OTLP).
@@ -93,7 +99,7 @@ func main() {
 		"scope", cfg.MCScope,
 		"listen_port", cfg.ListenPort,
 		"egress_port", cfg.EgressPort,
-		"iface", cfg.MulticastIF,
+		"ifaces", cfg.EgressIfaces,
 		"debug", cfg.Debug,
 		"metrics_addr", cfg.MetricsAddr,
 		"instance_id", cfg.InstanceID,
@@ -108,7 +114,7 @@ func main() {
 	go rec.Serve(cfg.MetricsAddr, done)
 
 	for i := range cfg.NumWorkers {
-		w := worker.New(i, engine, iface, cfg.EgressPort, cfg.Debug, rec)
+		w := worker.New(i, engine, ifaces, cfg.EgressPort, cfg.Debug, rec)
 		wg.Add(1)
 		go func() {
 			defer wg.Done()

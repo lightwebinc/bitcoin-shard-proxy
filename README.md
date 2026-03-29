@@ -17,8 +17,9 @@ that address. Subscribers join only the multicast groups covering the
 transaction IDs they care about.
 
 ```text
-sender  ──UDP──►  bitcoin-shard-proxy  ──UDP multicast──►  FF05::<shard>
-                  (one worker / CPU)                        (subset of subscribers)
+sender  ──UDP──►  bitcoin-shard-proxy  ──UDP multicast──►  FF05::<shard>  (iface 0)
+                  (one worker / CPU)   └─────────────────►  FF05::<shard>  (iface 1)
+                                                             (subset of subscribers)
 ```
 
 ### Shard address derivation
@@ -80,34 +81,50 @@ make clean  # removes built binaries
 
 ## Run
 
+Single interface:
+
 ```bash
 ./bitcoin-shard-proxy \
-  -iface     eth0 \
-  -shard-bits 16  \
-  -scope      site \
+  -iface       eth0 \
+  -shard-bits  16   \
+  -scope       site \
   -listen-port 9000 \
   -egress-port 9001
 ```
+
+Fan-out to multiple interfaces simultaneously:
+
+```bash
+./bitcoin-shard-proxy \
+  -iface       eth0,eth1 \
+  -shard-bits  16        \
+  -scope       site      \
+  -listen-port 9000      \
+  -egress-port 9001
+```
+
+Every forwarded datagram is written to all listed interfaces in order,
+with no copying and no extra goroutines on the hot path.
 
 All flags accept environment variable equivalents (see Configuration below).
 
 ## Configuration
 
-| Flag             | Env var         | Default  | Description                                             |
-| ---------------- | --------------- | -------- | ------------------------------------------------------- |
-| `-listen`        | `LISTEN_ADDR`   | `[::]`   | Ingress bind address                                    |
-| `-listen-port`   | `LISTEN_PORT`   | `9000`   | UDP port for incoming BSV transaction frames            |
-| `-iface`         | `MULTICAST_IF`  | `eth0`   | NIC for multicast egress                                |
-| `-egress-port`   | `EGRESS_PORT`   | `9001`   | Destination UDP port on multicast group addresses       |
-| `-shard-bits`    | `SHARD_BITS`    | `2`      | Bit width of the shard key (1-24)                       |
+| Flag             | Env var         | Default  | Description                                              |
+| ---------------- | --------------- | -------- | -------------------------------------------------------- |
+| `-listen`        | `LISTEN_ADDR`   | `[::]`   | Ingress bind address                                     |
+| `-listen-port`   | `LISTEN_PORT`   | `9000`   | UDP port for incoming BSV transaction frames             |
+| `-iface`         | `MULTICAST_IF`  | `eth0`   | NIC names for multicast egress, comma-separated          |
+| `-egress-port`   | `EGRESS_PORT`   | `9001`   | Destination UDP port on multicast group addresses        |
+| `-shard-bits`    | `SHARD_BITS`    | `2`      | Bit width of the shard key (1-24)                        |
 | `-scope`         | `MC_SCOPE`      | `site`   | Multicast scope: `link` / `site` / `org` / `global`     |
-| `-mc-base-addr`  | `MC_BASE_ADDR`  | `""`     | Base IPv6 address for assigned address space            |
-| `-workers`       | `NUM_WORKERS`   | `NumCPU` | Worker goroutine count (0 = runtime.NumCPU)             |
-| `-debug`         | n/a             | `false`  | Per-packet debug logging + multicast loopback           |
-| `-metrics-addr`  | `METRICS_ADDR`  | `:9100`  | HTTP bind address for `/metrics`, `/healthz`, `/readyz` |
-| `-instance`      | `INSTANCE_ID`   | hostname | OTel `service.instance.id` for federation               |
-| `-otlp-endpoint` | `OTLP_ENDPOINT` | `""`     | OTLP gRPC push endpoint (empty = disabled)              |
-| `-otlp-interval` | `OTLP_INTERVAL` | `30s`    | OTLP push interval                                      |
+| `-mc-base-addr`  | `MC_BASE_ADDR`  | `""`     | Base IPv6 address for assigned address space             |
+| `-workers`       | `NUM_WORKERS`   | `NumCPU` | Worker goroutine count (0 = runtime.NumCPU)              |
+| `-debug`         | n/a             | `false`  | Per-packet debug logging + multicast loopback            |
+| `-metrics-addr`  | `METRICS_ADDR`  | `:9100`  | HTTP bind address for `/metrics`, `/healthz`, `/readyz`  |
+| `-instance`      | `INSTANCE_ID`   | hostname | OTel `service.instance.id` for federation                |
+| `-otlp-endpoint` | `OTLP_ENDPOINT` | `""`     | OTLP gRPC push endpoint (empty = disabled)               |
+| `-otlp-interval` | `OTLP_INTERVAL` | `30s`    | OTLP push interval                                       |
 
 ### Shard bits vs. group count
 
@@ -253,6 +270,14 @@ Run each command in a separate terminal. Use `lo` instead of `lo0` on Linux.
   -listen-port 9000 -egress-port 9001 -debug
 ```
 
+To test multi-interface fan-out on Linux (loopback has only one interface,
+so use the same name twice to exercise the code path):
+
+```bash
+./bitcoin-shard-proxy -iface lo,lo -shard-bits 8 -scope link \
+  -listen-port 9000 -egress-port 9001 -debug
+```
+
 **Terminal 2 — join the first four shard groups:**
 
 ```bash
@@ -296,7 +321,7 @@ sudo tcpdump -i lo0 -n -XX "ip6 and udp and (ip6[24] == 0xff)"
 - [x] Add metrics collection and reporting
 - [x] Add health check endpoints
 - [x] Add more comprehensive logging
-- [ ] Add support for multiple interfaces
+- [x] Add support for multiple interfaces
 - [ ] Add support for subtree-based sharding
 - [ ] Add support for specialized transaction filtering
 - [ ] Add support for forward error correction (FEC)

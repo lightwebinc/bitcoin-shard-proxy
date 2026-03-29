@@ -69,6 +69,9 @@ func TestLoadDefaults(t *testing.T) {
 	if cfg.MCPrefix != 0xFF05 {
 		t.Errorf("MCPrefix = 0x%04X, want 0xFF05", cfg.MCPrefix)
 	}
+	if len(cfg.EgressIfaces) != 1 || cfg.EgressIfaces[0] != iface {
+		t.Errorf("EgressIfaces = %v, want [%s]", cfg.EgressIfaces, iface)
+	}
 }
 
 func TestLoadShardBitsRange(t *testing.T) {
@@ -127,6 +130,25 @@ func TestLoadBadInterface(t *testing.T) {
 	_, err := parseArgs(t, []string{"-iface", "no_such_iface_xyz"})
 	if err == nil {
 		t.Error("want error for missing interface, got nil")
+	}
+}
+
+func TestLoadMultipleIfaces(t *testing.T) {
+	iface := realIface(t)
+	// Pass the same interface twice via comma-separated value.
+	cfg, err := parseArgs(t, []string{"-iface", iface + "," + iface})
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if len(cfg.EgressIfaces) != 2 {
+		t.Errorf("EgressIfaces len = %d, want 2", len(cfg.EgressIfaces))
+	}
+}
+
+func TestLoadEmptyIfaceError(t *testing.T) {
+	_, err := parseArgs(t, []string{"-iface", ""})
+	if err == nil {
+		t.Error("want error for empty -iface, got nil")
 	}
 }
 

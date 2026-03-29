@@ -56,12 +56,18 @@ const (
 	socketBufBytes = 4 * 1024 * 1024 // 4 MiB
 )
 
-// Worker owns one ingress socket and one egress socket and processes
+// egressTarget pairs a network interface with its pre-opened egress socket.
+type egressTarget struct {
+	iface *net.Interface
+	conn  *net.UDPConn
+}
+
+// Worker owns one ingress socket and one or more egress sockets and processes
 // datagrams on a single goroutine. Create with [New] and start with [Run].
 type Worker struct {
 	id     int
 	engine *shard.Engine
-	iface  *net.Interface
+	ifaces []*net.Interface
 	port   int // egress UDP destination port for multicast groups
 	debug  bool
 	rec    *metrics.Recorder
@@ -72,15 +78,15 @@ type Worker struct {
 //
 //   - id is a small integer used in log fields to distinguish workers.
 //   - engine is the shared, immutable shard derivation engine.
-//   - iface is the NIC over which multicast datagrams are sent.
+//   - ifaces is the list of NICs over which multicast datagrams are sent.
 //   - egressPort is the UDP destination port written into outgoing datagrams.
 //   - debug enables per-packet debug logging and multicast loopback.
 //   - rec is the shared metrics recorder; may be nil to disable metrics.
-func New(id int, engine *shard.Engine, iface *net.Interface, egressPort int, debug bool, rec *metrics.Recorder) *Worker {
+func New(id int, engine *shard.Engine, ifaces []*net.Interface, egressPort int, debug bool, rec *metrics.Recorder) *Worker {
 	return &Worker{
 		id:     id,
 		engine: engine,
-		iface:  iface,
+		ifaces: ifaces,
 		port:   egressPort,
 		debug:  debug,
 		rec:    rec,
@@ -146,50 +152,56 @@ func (w *Worker) Run(listenAddr string, listenPort int, done <-chan struct{}) er
 		}
 	}()
 
-	// WriteTo is used for each outgoing multicast datagram.
-	egressConn, err := net.ListenPacket("udp6", "[::]:0")
-	if err != nil {
-		return fmt.Errorf("worker %d: egress ListenPacket: %w", w.id, err)
-	}
-	defer func() {
-		if err := egressConn.Close(); err != nil {
-			w.log.Warn("close egress conn", "err", err)
-		}
-	}()
-
-	udpEgress := egressConn.(*net.UDPConn)
-
-	// Bind egress socket to configured NIC so multicast datagrams
-	// exit on correct interface.
-	egressFile, err := udpEgress.File()
-	if err != nil {
-		return fmt.Errorf("worker %d: get UDP file descriptor: %w", w.id, err)
-	}
-	defer func() {
-		if err := egressFile.Close(); err != nil {
-			w.log.Warn("close egress file", "err", err)
-		}
-	}()
-
-	if err := unix.SetsockoptInt(int(egressFile.Fd()), unix.IPPROTO_IPV6, unix.IPV6_MULTICAST_IF, w.iface.Index); err != nil {
-		return fmt.Errorf("worker %d: SetMulticastInterface(%s): %w", w.id, w.iface.Name, err)
-	}
-
-	// Disable multicast loopback in production so the proxy does not receive
-	// its own forwarded datagrams. Enable in debug mode for single-host testing.
+	// Open one egress socket per configured interface.
 	loopback := 0
 	if w.debug {
 		loopback = 1
 	}
-	if err := unix.SetsockoptInt(int(egressFile.Fd()), unix.IPPROTO_IPV6, unix.IPV6_MULTICAST_LOOP, loopback); err != nil {
-		w.log.Warn("could not configure multicast loopback", "err", err)
+	targets := make([]egressTarget, 0, len(w.ifaces))
+	for _, iface := range w.ifaces {
+		egressConn, err := net.ListenPacket("udp6", "[::]:0")
+		if err != nil {
+			return fmt.Errorf("worker %d: egress ListenPacket(%s): %w", w.id, iface.Name, err)
+		}
+		udpEgress := egressConn.(*net.UDPConn)
+
+		egressFile, err := udpEgress.File()
+		if err != nil {
+			_ = udpEgress.Close()
+			return fmt.Errorf("worker %d: get UDP file descriptor(%s): %w", w.id, iface.Name, err)
+		}
+
+		fd := int(egressFile.Fd())
+		if err := unix.SetsockoptInt(fd, unix.IPPROTO_IPV6, unix.IPV6_MULTICAST_IF, iface.Index); err != nil {
+			_ = egressFile.Close()
+			_ = udpEgress.Close()
+			return fmt.Errorf("worker %d: SetMulticastInterface(%s): %w", w.id, iface.Name, err)
+		}
+		if err := unix.SetsockoptInt(fd, unix.IPPROTO_IPV6, unix.IPV6_MULTICAST_LOOP, loopback); err != nil {
+			w.log.Warn("could not configure multicast loopback", "iface", iface.Name, "err", err)
+		}
+		_ = egressFile.Close()
+
+		targets = append(targets, egressTarget{iface: iface, conn: udpEgress})
 	}
+	defer func() {
+		for _, tgt := range targets {
+			if err := tgt.conn.Close(); err != nil {
+				w.log.Warn("close egress conn", "iface", tgt.iface.Name, "err", err)
+			}
+		}
+	}()
 
 	buf := make([]byte, RecvBufSize)
+	ifaceNames := make([]string, len(targets))
+	for i, tgt := range targets {
+		ifaceNames[i] = tgt.iface.Name
+	}
 	w.log.Info("ready",
 		"shard_bits", w.engine.ShardBits(),
 		"num_groups", w.engine.NumGroups(),
 		"listen_port", listenPort,
+		"egress_ifaces", ifaceNames,
 	)
 	if w.rec != nil {
 		w.rec.WorkerReady()
@@ -204,7 +216,7 @@ func (w *Worker) Run(listenAddr string, listenPort int, done <-chan struct{}) er
 			}
 			w.log.Warn("ReadFrom error", "err", err)
 			if w.rec != nil {
-				w.rec.IngressError(w.iface.Name, w.id)
+				w.rec.IngressError(targets[0].iface.Name, w.id)
 			}
 			continue
 		}
@@ -213,15 +225,15 @@ func (w *Worker) Run(listenAddr string, listenPort int, done <-chan struct{}) er
 			w.log.Warn("datagram fills recv buffer; may be truncated",
 				"src", src, "len", n)
 			if w.rec != nil {
-				w.rec.PacketDropped(w.iface.Name, w.id, "truncated")
+				w.rec.PacketDropped(targets[0].iface.Name, w.id, "truncated")
 			}
 			continue
 		}
 
 		if w.rec != nil {
-			w.rec.PacketReceived(w.iface.Name, w.id, n)
+			w.rec.PacketReceived(targets[0].iface.Name, w.id, n)
 		}
-		w.process(udpEgress, buf[:n], src)
+		w.process(targets, buf[:n], src)
 	}
 }
 
@@ -229,13 +241,14 @@ func (w *Worker) Run(listenAddr string, listenPort int, done <-chan struct{}) er
 //
 // It decodes the BSV frame header, derives the destination multicast group
 // address from the txid prefix, and retransmits the original raw datagram
-// bytes verbatim to that address. No re-serialisation occurs.
-func (w *Worker) process(egress *net.UDPConn, raw []byte, src net.Addr) {
+// bytes verbatim to that address on every configured egress interface.
+// No re-serialisation occurs.
+func (w *Worker) process(targets []egressTarget, raw []byte, src net.Addr) {
 	f, err := frame.Decode(raw)
 	if err != nil {
 		w.log.Debug("frame decode error", "err", err, "len", len(raw))
 		if w.rec != nil {
-			w.rec.PacketDropped(w.iface.Name, w.id, "decode_error")
+			w.rec.PacketDropped(targets[0].iface.Name, w.id, "decode_error")
 		}
 		return
 	}
@@ -243,17 +256,18 @@ func (w *Worker) process(egress *net.UDPConn, raw []byte, src net.Addr) {
 	groupIdx := w.engine.GroupIndex(&f.TxID)
 	dst := w.engine.Addr(groupIdx, w.port)
 
-	if _, err := egress.WriteTo(raw, dst); err != nil {
-		w.log.Warn("WriteTo error", "dst", dst, "err", err)
-		if w.rec != nil {
-			w.rec.PacketDropped(w.iface.Name, w.id, "write_error")
-			w.rec.EgressError(w.iface.Name, w.id)
+	for _, tgt := range targets {
+		if _, err := tgt.conn.WriteTo(raw, dst); err != nil {
+			w.log.Warn("WriteTo error", "iface", tgt.iface.Name, "dst", dst, "err", err)
+			if w.rec != nil {
+				w.rec.PacketDropped(tgt.iface.Name, w.id, "write_error")
+				w.rec.EgressError(tgt.iface.Name, w.id)
+			}
+			continue
 		}
-		return
-	}
-
-	if w.rec != nil {
-		w.rec.PacketForwarded(w.iface.Name, w.id, groupIdx, len(raw))
+		if w.rec != nil {
+			w.rec.PacketForwarded(tgt.iface.Name, w.id, groupIdx, len(raw))
+		}
 	}
 
 	if w.debug {
