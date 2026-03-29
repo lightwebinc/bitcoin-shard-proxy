@@ -110,21 +110,21 @@ All flags accept environment variable equivalents (see Configuration below).
 
 ## Configuration
 
-| Flag             | Env var         | Default  | Description                                              |
-| ---------------- | --------------- | -------- | -------------------------------------------------------- |
-| `-listen`        | `LISTEN_ADDR`   | `[::]`   | Ingress bind address                                     |
-| `-listen-port`   | `LISTEN_PORT`   | `9000`   | UDP port for incoming BSV transaction frames             |
-| `-iface`         | `MULTICAST_IF`  | `eth0`   | NIC names for multicast egress, comma-separated          |
-| `-egress-port`   | `EGRESS_PORT`   | `9001`   | Destination UDP port on multicast group addresses        |
-| `-shard-bits`    | `SHARD_BITS`    | `2`      | Bit width of the shard key (1-24)                        |
+| Flag             | Env var         | Default  | Description                                             |
+| ---------------- | --------------- | -------- | ------------------------------------------------------- |
+| `-listen`        | `LISTEN_ADDR`   | `[::]`   | Ingress bind address                                    |
+| `-listen-port`   | `LISTEN_PORT`   | `9000`   | UDP port for incoming BSV transaction frames            |
+| `-iface`         | `MULTICAST_IF`  | `eth0`   | NIC names for multicast egress, comma-separated         |
+| `-egress-port`   | `EGRESS_PORT`   | `9001`   | Destination UDP port on multicast group addresses       |
+| `-shard-bits`    | `SHARD_BITS`    | `2`      | Bit width of the shard key (1-24)                       |
 | `-scope`         | `MC_SCOPE`      | `site`   | Multicast scope: `link` / `site` / `org` / `global`     |
-| `-mc-base-addr`  | `MC_BASE_ADDR`  | `""`     | Base IPv6 address for assigned address space             |
-| `-workers`       | `NUM_WORKERS`   | `NumCPU` | Worker goroutine count (0 = runtime.NumCPU)              |
-| `-debug`         | n/a             | `false`  | Per-packet debug logging + multicast loopback            |
-| `-metrics-addr`  | `METRICS_ADDR`  | `:9100`  | HTTP bind address for `/metrics`, `/healthz`, `/readyz`  |
-| `-instance`      | `INSTANCE_ID`   | hostname | OTel `service.instance.id` for federation                |
-| `-otlp-endpoint` | `OTLP_ENDPOINT` | `""`     | OTLP gRPC push endpoint (empty = disabled)               |
-| `-otlp-interval` | `OTLP_INTERVAL` | `30s`    | OTLP push interval                                       |
+| `-mc-base-addr`  | `MC_BASE_ADDR`  | `""`     | Base IPv6 address for assigned address space            |
+| `-workers`       | `NUM_WORKERS`   | `NumCPU` | Worker goroutine count (0 = runtime.NumCPU)             |
+| `-debug`         | n/a             | `false`  | Per-packet debug logging + multicast loopback           |
+| `-metrics-addr`  | `METRICS_ADDR`  | `:9100`  | HTTP bind address for `/metrics`, `/healthz`, `/readyz` |
+| `-instance`      | `INSTANCE_ID`   | hostname | OTel `service.instance.id` for federation               |
+| `-otlp-endpoint` | `OTLP_ENDPOINT` | `""`     | OTLP gRPC push endpoint (empty = disabled)              |
+| `-otlp-interval` | `OTLP_INTERVAL` | `30s`    | OTLP push interval                                      |
 
 ### Shard bits vs. group count
 
