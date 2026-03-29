@@ -59,7 +59,7 @@ All multi-byte integers big-endian:
 | 7      | 1 B  | Reserved       | `0x00`                            |
 | 8      | 32 B | Transaction ID | Raw 256-bit txid (internal order) |
 | 40     | 4 B  | Payload length | uint32, max 10 MiB                |
-| 44     | var  | Tx payload     | Raw serialised BSV transaction    |
+| 44     | var  | Tx payload     | Raw serialised BRC-12 format txn  |
 
 The txid at offset 8 is in internal byte order (as used in the BSV P2P
 protocol), not the reversed display order shown by block explorers.
@@ -68,7 +68,7 @@ protocol), not the reversed display order shown by block explorers.
 
 - Go 1.26.1 or later
 - Linux kernel 3.9+, FreeBSD 12.3+ (for `SO_REUSEPORT`)
-- IPv6 enabled on the egress interface
+- IPv6 enabled on the egress interface(s)
 - Multicast routing / MLD snooping configured for your subscriber fabric
 
 ## Build
@@ -315,6 +315,16 @@ Full hex dump for manual frame inspection:
 sudo tcpdump -i lo0 -n -XX "ip6 and udp and (ip6[24] == 0xff)"
 ```
 
+## Key lingering design questions
+
+- Should ingress only accept BRC-12 format transaction frames?
+- What about control messages, such as Block Headers, sequencing, subtree announcements?
+- What multicast group address should be used for control messages?
+- What type of mechanism should be used for multicast NACK-based retransmission?
+- What frame format should be used for control messages? Should the proxy differentiate?
+- How will subtree-based sharding work? What frame format?
+- What about FEC?
+
 ## TODO
 
 - [x] Test coverage
@@ -323,7 +333,6 @@ sudo tcpdump -i lo0 -n -XX "ip6 and udp and (ip6[24] == 0xff)"
 - [x] Add more comprehensive logging
 - [x] Add support for multiple egress interfaces
 - [ ] Add support for subtree-based sharding
-- [ ] Add support for specialized transaction filtering
 - [ ] Add support for forward error correction (FEC)
 - [ ] Add support for sequence numbering
 - [ ] Add support for Negative-ACK (NACK) based retransmission
