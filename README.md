@@ -321,7 +321,7 @@ sudo tcpdump -i lo0 -n -XX "ip6 and udp and (ip6[24] == 0xff)"
 - [x] Add metrics collection and reporting
 - [x] Add health check endpoints
 - [x] Add more comprehensive logging
-- [x] Add support for multiple interfaces
+- [x] Add support for multiple egress interfaces
 - [ ] Add support for subtree-based sharding
 - [ ] Add support for specialized transaction filtering
 - [ ] Add support for forward error correction (FEC)

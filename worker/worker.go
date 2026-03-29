@@ -182,6 +182,15 @@ func (w *Worker) Run(listenAddr string, listenPort int, done <-chan struct{}) er
 		}
 		_ = egressFile.Close()
 
+		// Probe the socket on worker 0 only — all workers use the same
+		// interfaces, so one probe per interface at startup is sufficient.
+		if w.id == 0 {
+			if err := probeEgressSocket(udpEgress, iface); err != nil {
+				_ = udpEgress.Close()
+				return fmt.Errorf("worker %d: egress probe(%s): %w", w.id, iface.Name, err)
+			}
+		}
+
 		targets = append(targets, egressTarget{iface: iface, conn: udpEgress})
 	}
 	defer func() {
@@ -278,6 +287,35 @@ func (w *Worker) process(targets []egressTarget, raw []byte, src net.Addr) {
 			"dst", dst,
 		)
 	}
+}
+
+// probeEgressSocket sends a zero-byte datagram to the link-local all-nodes
+// multicast address (ff02::1) on the given interface. This exercises the
+// actual WriteTo path with IPV6_MULTICAST_IF applied and catches interface
+// misconfigurations — missing routes, policy drops, unsupported tunnel types —
+// at startup rather than silently under load.
+//
+// Hard errors (ENETUNREACH, EPERM, EADDRNOTAVAIL) cause a non-nil return so
+// the caller can fail fast. Any other error is treated as a soft warning and
+// does not prevent startup; the interface may still work for unicast or the
+// error may be transient.
+func probeEgressSocket(conn *net.UDPConn, iface *net.Interface) error {
+	dst := &net.UDPAddr{
+		IP:   net.ParseIP("ff02::1"),
+		Port: 9, // discard port — no listener required
+		Zone: iface.Name,
+	}
+	_, err := conn.WriteTo([]byte{}, dst)
+	if err == nil {
+		return nil
+	}
+	if isErrno(err, syscall.ENETUNREACH) ||
+		isErrno(err, syscall.EPERM) ||
+		isErrno(err, syscall.EADDRNOTAVAIL) {
+		return fmt.Errorf("interface not usable for multicast egress: %w", err)
+	}
+	// Soft: log-worthy but not fatal (e.g. ENOBUFS, filtered ICMP unreachable).
+	return nil
 }
 
 // isClosedErr returns true for errors that indicate the socket was closed

@@ -219,6 +219,29 @@ func TestProcessBadMagic(t *testing.T) {
 	w.process(makeTargets(t, egress), raw, fakeAddr{})
 }
 
+// ── probeEgressSocket ────────────────────────────────────────────────────────
+
+func TestProbeEgressSocketLoopback(t *testing.T) {
+	conn, _ := openLoopbackUDP(t)
+	iface := &net.Interface{Index: 1, Name: "lo"}
+	// On loopback with a real UDP socket the probe should either succeed or
+	// return a soft error (non-fatal). It must never return a hard error that
+	// would prevent startup on a properly configured host.
+	if err := probeEgressSocket(conn, iface); err != nil {
+		t.Errorf("probeEgressSocket on loopback: unexpected hard error: %v", err)
+	}
+}
+
+func TestProbeEgressSocketClosedConn(t *testing.T) {
+	conn, _ := openLoopbackUDP(t)
+	iface := &net.Interface{Index: 1, Name: "lo"}
+	// Closing the conn before probing should not produce a hard-error return
+	// (EBADF is treated as soft).
+	conn.Close()
+	// Should not panic; soft or hard is acceptable but must not crash.
+	_ = probeEgressSocket(conn, iface)
+}
+
 func TestProcessMultipleTargets(t *testing.T) {
 	egress1, _ := openLoopbackUDP(t)
 	egress2, _ := openLoopbackUDP(t)
