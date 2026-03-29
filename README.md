@@ -318,6 +318,7 @@ sudo tcpdump -i lo0 -n -XX "ip6 and udp and (ip6[24] == 0xff)"
 ## Key lingering design questions
 
 - Should ingress only accept BRC-12 format transaction frames?
+- Should a different type of hash algorithm be applied to the TXID prior to determining the shard group?
 - What about control messages, such as Block Headers, sequencing, subtree announcements?
 - What multicast group address should be used for control messages?
 - What type of mechanism should be used for multicast NACK-based retransmission?
