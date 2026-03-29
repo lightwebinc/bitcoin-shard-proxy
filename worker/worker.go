@@ -41,6 +41,7 @@ import (
 	"golang.org/x/sys/unix"
 
 	"github.com/jefflightweb/bitcoin-shard-proxy/frame"
+	"github.com/jefflightweb/bitcoin-shard-proxy/metrics"
 	"github.com/jefflightweb/bitcoin-shard-proxy/shard"
 )
 
@@ -63,6 +64,7 @@ type Worker struct {
 	iface  *net.Interface
 	port   int // egress UDP destination port for multicast groups
 	debug  bool
+	rec    *metrics.Recorder
 	log    *slog.Logger
 }
 
@@ -73,13 +75,15 @@ type Worker struct {
 //   - iface is the NIC over which multicast datagrams are sent.
 //   - egressPort is the UDP destination port written into outgoing datagrams.
 //   - debug enables per-packet debug logging and multicast loopback.
-func New(id int, engine *shard.Engine, iface *net.Interface, egressPort int, debug bool) *Worker {
+//   - rec is the shared metrics recorder; may be nil to disable metrics.
+func New(id int, engine *shard.Engine, iface *net.Interface, egressPort int, debug bool, rec *metrics.Recorder) *Worker {
 	return &Worker{
 		id:     id,
 		engine: engine,
 		iface:  iface,
 		port:   egressPort,
 		debug:  debug,
+		rec:    rec,
 		log:    slog.Default().With("worker", id),
 	}
 }
@@ -184,6 +188,10 @@ func (w *Worker) Run(listenAddr string, listenPort int, done <-chan struct{}) er
 		"num_groups", w.engine.NumGroups(),
 		"listen_port", listenPort,
 	)
+	if w.rec != nil {
+		w.rec.WorkerReady()
+		defer w.rec.WorkerDone()
+	}
 
 	for {
 		n, _, err := conn.ReadFrom(buf)
@@ -192,9 +200,15 @@ func (w *Worker) Run(listenAddr string, listenPort int, done <-chan struct{}) er
 				return nil
 			}
 			w.log.Warn("ReadFrom error", "err", err)
+			if w.rec != nil {
+				w.rec.IngressError(w.iface.Name, w.id)
+			}
 			continue
 		}
 
+		if w.rec != nil {
+			w.rec.PacketReceived(w.iface.Name, w.id, n)
+		}
 		w.process(udpEgress, buf[:n])
 	}
 }
@@ -208,6 +222,9 @@ func (w *Worker) process(egress *net.UDPConn, raw []byte) {
 	f, err := frame.Decode(raw)
 	if err != nil {
 		w.log.Debug("frame decode error", "err", err, "len", len(raw))
+		if w.rec != nil {
+			w.rec.PacketDropped(w.iface.Name, w.id, "decode_error")
+		}
 		return
 	}
 
@@ -216,7 +233,15 @@ func (w *Worker) process(egress *net.UDPConn, raw []byte) {
 
 	if _, err := egress.WriteTo(raw, dst); err != nil {
 		w.log.Warn("WriteTo error", "dst", dst, "err", err)
+		if w.rec != nil {
+			w.rec.PacketDropped(w.iface.Name, w.id, "write_error")
+			w.rec.EgressError(w.iface.Name, w.id)
+		}
 		return
+	}
+
+	if w.rec != nil {
+		w.rec.PacketForwarded(w.iface.Name, w.id, groupIdx, len(raw))
 	}
 
 	if w.debug {

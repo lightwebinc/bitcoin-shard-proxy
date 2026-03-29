@@ -93,22 +93,26 @@ All flags accept environment variable equivalents (see Configuration below).
 
 ## Configuration
 
-| Flag           | Env var        | Default      | Description                                      |
-|----------------|----------------|--------------|--------------------------------------------------|
-| `-listen`      | `LISTEN_ADDR`  | `[::]`       | Ingress bind address                             |
-| `-listen-port` | `LISTEN_PORT`  | `9000`       | UDP port for incoming BSV transaction frames     |
-| `-iface`       | `MULTICAST_IF` | `eth0`       | NIC for multicast egress                         |
-| `-egress-port` | `EGRESS_PORT`  | `9001`       | Destination UDP port on multicast group addresses|
-| `-shard-bits`  | `SHARD_BITS`   | `16`         | Bit width of the shard key (1–24)                |
-| `-scope`       | `MC_SCOPE`     | `site`       | Multicast scope: `link` / `site` / `org` / `global` |
-| `-mc-base-addr`| `MC_BASE_ADDR` | `""`         | Base IPv6 address for assigned address space     |
-| `-workers`     | `NUM_WORKERS`  | `NumCPU`     | Worker goroutine count (0 = runtime.NumCPU)      |
-| `-debug`       | —              | `false`      | Per-packet debug logging + multicast loopback    |
+| Flag | Env var | Default | Description |
+| --- | --- | --- | --- |
+| `-listen` | `LISTEN_ADDR` | `[::]` | Ingress bind address |
+| `-listen-port` | `LISTEN_PORT` | `9000` | UDP port for incoming BSV transaction frames |
+| `-iface` | `MULTICAST_IF` | `eth0` | NIC for multicast egress |
+| `-egress-port` | `EGRESS_PORT` | `9001` | Destination UDP port on multicast group addresses |
+| `-shard-bits` | `SHARD_BITS` | `2` | Bit width of the shard key (1-24) |
+| `-scope` | `MC_SCOPE` | `site` | Multicast scope: `link` / `site` / `org` / `global` |
+| `-mc-base-addr` | `MC_BASE_ADDR` | `""` | Base IPv6 address for assigned address space |
+| `-workers` | `NUM_WORKERS` | `NumCPU` | Worker goroutine count (0 = runtime.NumCPU) |
+| `-debug` | n/a | `false` | Per-packet debug logging + multicast loopback |
+| `-metrics-addr` | `METRICS_ADDR` | `:9100` | HTTP bind address for `/metrics`, `/healthz`, `/readyz` |
+| `-instance` | `INSTANCE_ID` | hostname | OTel `service.instance.id` for federation |
+| `-otlp-endpoint` | `OTLP_ENDPOINT` | `""` | OTLP gRPC push endpoint (empty = disabled) |
+| `-otlp-interval` | `OTLP_INTERVAL` | `30s` | OTLP push interval |
 
 ### Shard bits vs. group count
 
 | `SHARD_BITS` | Groups     | Typical use case                        |
-|-------------|------------|-----------------------------------------|
+|--------------|------------|-----------------------------------------|
 | 2           | 4          | Ultra small; testing only               |
 | 4           | 16         | Very small deployment; single switch    |
 | 8           | 256        | Small lab; fits any managed switch      |
@@ -217,6 +221,8 @@ bitcoin-shard-proxy/
 ├── shard/
 │   ├── shard.go             Txid → multicast address derivation
 │   └── shard_test.go
+├── metrics/
+│   └── metrics.go           OTel Recorder, Prometheus + OTLP exporters, health HTTP server
 ├── worker/
 │   └── worker.go            Receive/retransmit loop
 ├── go.mod
@@ -288,8 +294,8 @@ sudo tcpdump -i lo0 -n -XX "ip6 and udp and (ip6[24] == 0xff)"
 ## TODO
 
 - [ ] Lots of testing needed
-- [ ] Add metrics collection and reporting
-- [ ] Add health check endpoints
+- [x] Add metrics collection and reporting
+- [x] Add health check endpoints
 - [ ] Add more comprehensive logging
 - [ ] Add support for multiple interfaces
 - [ ] Add support for subtree-based sharding

@@ -36,14 +36,17 @@
 package main
 
 import (
+	"context"
 	"log/slog"
 	"net"
 	"os"
 	"os/signal"
 	"sync"
 	"syscall"
+	"time"
 
 	"github.com/jefflightweb/bitcoin-shard-proxy/config"
+	"github.com/jefflightweb/bitcoin-shard-proxy/metrics"
 	"github.com/jefflightweb/bitcoin-shard-proxy/shard"
 	"github.com/jefflightweb/bitcoin-shard-proxy/worker"
 )
@@ -73,6 +76,13 @@ func main() {
 		os.Exit(1)
 	}
 
+	// Initialise the metrics recorder (Prometheus + optional OTLP).
+	rec, err := metrics.New(cfg.InstanceID, cfg.NumWorkers, cfg.OTLPEndpoint, cfg.OTLPInterval)
+	if err != nil {
+		slog.Error("metrics init failed", "err", err)
+		os.Exit(1)
+	}
+
 	// Construct the shard engine. It is immutable and safe for concurrent use.
 	engine := shard.New(cfg.MCPrefix, cfg.MCMiddleBytes, cfg.ShardBits)
 
@@ -85,14 +95,18 @@ func main() {
 		"egress_port", cfg.EgressPort,
 		"iface", cfg.MulticastIF,
 		"debug", cfg.Debug,
+		"metrics_addr", cfg.MetricsAddr,
 	)
 
 	// done is closed to signal all workers to stop their receive loops.
 	done := make(chan struct{})
 	var wg sync.WaitGroup
 
+	// Start the metrics HTTP server (blocks on done; shuts down gracefully).
+	go rec.Serve(cfg.MetricsAddr, done)
+
 	for i := range cfg.NumWorkers {
-		w := worker.New(i, engine, iface, cfg.EgressPort, cfg.Debug)
+		w := worker.New(i, engine, iface, cfg.EgressPort, cfg.Debug, rec)
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
@@ -128,9 +142,14 @@ func main() {
 		"signal_number", int(received.(syscall.Signal)),
 	)
 
-	// Close done to unblock all worker receive loops, then wait for them to
-	// finish draining any in-flight datagrams.
+	// Close done to unblock all worker receive loops and the metrics server,
+	// then flush any pending OTLP exports before waiting for workers to drain.
 	close(done)
+
+	shutCtx, shutCancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer shutCancel()
+	rec.Shutdown(shutCtx)
+
 	wg.Wait()
 
 	slog.Info("all workers stopped; exiting cleanly")

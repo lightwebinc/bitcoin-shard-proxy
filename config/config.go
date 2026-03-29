@@ -10,10 +10,14 @@
 //	-listen-port     LISTEN_PORT      9000          UDP listen port
 //	-iface           MULTICAST_IF     eth0          NIC for multicast egress
 //	-egress-port     EGRESS_PORT      9001          Destination port on groups
-//	-shard-bits      SHARD_BITS       16            Key bit width (1–24)
+//	-shard-bits      SHARD_BITS       2             Key bit width (1–24)
 //	-scope           MC_SCOPE         site          Multicast scope
 //	-workers         NUM_WORKERS      runtime.NumCPU  Worker goroutine count
 //	-debug           —                false         Per-packet logging + loopback
+//	-metrics-addr    METRICS_ADDR     :9100         HTTP bind for /metrics, /healthz, /readyz
+//	-instance        INSTANCE_ID      hostname      OTel service.instance.id
+//	-otlp-endpoint   OTLP_ENDPOINT    ""            OTLP gRPC endpoint (empty = disabled)
+//	-otlp-interval   OTLP_INTERVAL    30s           OTLP push interval
 package config
 
 import (
@@ -23,6 +27,7 @@ import (
 	"os"
 	"runtime"
 	"strconv"
+	"time"
 )
 
 // Scopes maps a human-readable scope name to the two-byte big-endian IPv6
@@ -59,6 +64,12 @@ type Config struct {
 	// Runtime
 	NumWorkers int  // Worker goroutine count; defaults to runtime.NumCPU()
 	Debug      bool // Enables per-packet debug logging and multicast loopback
+
+	// Observability
+	MetricsAddr  string        // HTTP bind address for /metrics, /healthz, /readyz
+	InstanceID   string        // OTel service.instance.id for federation; defaults to hostname
+	OTLPEndpoint string        // gRPC OTLP endpoint (empty = disabled)
+	OTLPInterval time.Duration // OTLP push interval
 }
 
 // Load parses flags and environment variables, validates all values, and
@@ -86,8 +97,17 @@ func Load() (*Config, error) {
 		"base IPv6 address for assigned multicast address space (bytes 2-12)")
 	flag.BoolVar(&c.Debug, "debug", false,
 		"enable per-packet debug logging and multicast loopback (single-host testing)")
+	flag.StringVar(&c.MetricsAddr, "metrics-addr", envStr("METRICS_ADDR", ":9100"),
+		"HTTP bind address for /metrics, /healthz, /readyz")
+	flag.StringVar(&c.InstanceID, "instance", envStr("INSTANCE_ID", ""),
+		"OTel service.instance.id for federation (default: hostname)")
+	flag.StringVar(&c.OTLPEndpoint, "otlp-endpoint", envStr("OTLP_ENDPOINT", ""),
+		"OTLP gRPC endpoint for metric push (empty = disabled)")
 
-	bits := flag.Uint("shard-bits", uint(envInt("SHARD_BITS", 16)),
+	otlpInterval := flag.Duration("otlp-interval", envDuration("OTLP_INTERVAL", 30*time.Second),
+		"OTLP push interval")
+
+	bits := flag.Uint("shard-bits", uint(envInt("SHARD_BITS", 2)),
 		"txid prefix bit width used as the shard key (1–24)")
 
 	flag.Parse()
@@ -98,6 +118,7 @@ func Load() (*Config, error) {
 	}
 	c.ShardBits = *bits
 	c.NumGroups = 1 << c.ShardBits
+	c.OTLPInterval = *otlpInterval
 
 	// Resolve multicast scope.
 	prefix, ok := Scopes[c.MCScope]
@@ -157,6 +178,17 @@ func envInt(key string, def int) int {
 	if v := os.Getenv(key); v != "" {
 		if n, err := strconv.Atoi(v); err == nil {
 			return n
+		}
+	}
+	return def
+}
+
+// envDuration returns the time.Duration value of environment variable key,
+// or def if the variable is unset, empty, or not parseable.
+func envDuration(key string, def time.Duration) time.Duration {
+	if v := os.Getenv(key); v != "" {
+		if d, err := time.ParseDuration(v); err == nil {
+			return d
 		}
 	}
 	return def
