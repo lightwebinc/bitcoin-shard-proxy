@@ -1,5 +1,7 @@
 # bitcoin-shard-proxy
 
+[![CI](https://github.com/jefflightweb/bitcoin-shard-proxy/actions/workflows/ci.yml/badge.svg)](https://github.com/jefflightweb/bitcoin-shard-proxy/actions/workflows/ci.yml)
+
 A high-throughput UDP proxy that receives Bitcoin SV (BSV Blockchain) transaction
 datagrams, derives an IPv6 multicast group address from the transaction ID,
 and retransmits each datagram to the derived group for delivery to a subset
@@ -66,7 +68,7 @@ protocol), not the reversed display order shown by block explorers.
 
 ## Requirements
 
-- Go 1.26.1 or later
+- Go 1.25 or later
 - Linux kernel 3.9+, FreeBSD 12.3+ (for `SO_REUSEPORT`)
 - IPv6 enabled on the egress interface(s)
 - Multicast routing / MLD snooping configured for your subscriber fabric
@@ -74,9 +76,10 @@ protocol), not the reversed display order shown by block explorers.
 ## Build
 
 ```bash
-make        # builds bitcoin-shard-proxy, send-test-frames, recv-test-frames
-make test   # runs unit tests
-make clean  # removes built binaries
+make            # builds bitcoin-shard-proxy, send-test-frames, recv-test-frames
+make test       # runs unit tests
+make test-e2e   # end-to-end test (builds all binaries, runs test/run-e2e.sh)
+make clean      # removes built binaries
 ```
 
 ## Run
@@ -120,7 +123,7 @@ All flags accept environment variable equivalents (see Configuration below).
 | `-scope`         | `MC_SCOPE`      | `site`   | Multicast scope: `link` / `site` / `org` / `global`     |
 | `-mc-base-addr`  | `MC_BASE_ADDR`  | `""`     | Base IPv6 address for assigned address space            |
 | `-workers`       | `NUM_WORKERS`   | `NumCPU` | Worker goroutine count (0 = runtime.NumCPU)             |
-| `-debug`         | n/a             | `false`  | Per-packet debug logging + multicast loopback           |
+| `-debug`         | `DEBUG`         | `false`  | Per-packet debug logging + multicast loopback           |
 | `-metrics-addr`  | `METRICS_ADDR`  | `:9100`  | HTTP bind address for `/metrics`, `/healthz`, `/readyz` |
 | `-instance`      | `INSTANCE_ID`   | hostname | OTel `service.instance.id` for federation               |
 | `-otlp-endpoint` | `OTLP_ENDPOINT` | `""`     | OTLP gRPC push endpoint (empty = disabled)              |
@@ -224,6 +227,7 @@ guaranteeing full coverage verification at any `SHARD_BITS` value.
 ```text
 bitcoin-shard-proxy/
 ├── main.go                  Entry point, signal handling, worker lifecycle
+├── Dockerfile               Multi-stage build (golang:1.25 builder → ubuntu:24.04 runtime)
 ├── cmd/
 │   ├── send-test-frames/
 │   │   └── main.go          Test sender: crafts transaction frames and sends to proxy
@@ -241,6 +245,14 @@ bitcoin-shard-proxy/
 │   └── metrics.go           OTel Recorder, Prometheus + OTLP exporters, health HTTP server
 ├── worker/
 │   └── worker.go            Receive/retransmit loop
+├── test/
+│   ├── run-e2e.sh           End-to-end test orchestration script (OS-aware: lo0/lo)
+│   ├── Dockerfile.e2e       Single-image build with proxy + test tools (for Linux CI)
+│   ├── Dockerfile.tools     Test tools image (send/recv binaries only)
+│   └── docker-compose.yml   Linux CI compose (single e2e service)
+├── .github/workflows/
+│   ├── ci.yml               CI: unit tests + E2E on every push/PR
+│   └── release.yml          Release: GitHub release on v*.* tags
 ├── go.mod
 └── README.md
 ```
@@ -250,16 +262,34 @@ bitcoin-shard-proxy/
 ### Unit tests
 
 ```bash
-go test ./frame/... ./shard/...
+make test
 ```
 
-### Build the test tools
+### End-to-end test
+
+Builds all binaries and runs the full send→proxy→receive pipeline:
 
 ```bash
-make  # builds all binaries including send-test-frames and recv-test-frames
+make test-e2e
 ```
 
-### Local integration test (loopback)
+On macOS, multicast delivery is verified end-to-end via `recv-test-frames` on `lo0`.
+On Linux, forwarding is verified via the proxy's Prometheus metrics endpoint
+(`bsp_packets_forwarded_total`) — cross-process IPv6 multicast loopback on `lo`
+is not reliably available in containerised or VM-based Linux environments.
+
+The test passes with exit code 0 (`=== PASS ===`) or fails with 1 (`=== FAIL ===`).
+Environment variables:
+
+| Variable       | Default | Description                                |
+| -------------- | ------- | ------------------------------------------ |
+| `SHARD_BITS`   | `2`     | Shard bit width for the test run           |
+| `RECV_COUNT`   | `4`     | Number of frames expected (= 2^SHARD_BITS) |
+| `LISTEN_PORT`  | `9000`  | Proxy ingress port                         |
+| `EGRESS_PORT`  | `9001`  | Proxy egress / receiver listen port        |
+| `METRICS_PORT` | `9100`  | Proxy metrics port (Linux assertion)       |
+
+### Manual integration test (loopback)
 
 Run each command in a separate terminal. Use `lo` instead of `lo0` on Linux.
 
@@ -333,6 +363,7 @@ sudo tcpdump -i lo0 -n -XX "ip6 and udp and (ip6[24] == 0xff)"
 - [x] Add health check endpoints
 - [x] Add more comprehensive logging
 - [x] Add support for multiple egress interfaces
+- [x] Add Docker image and CI/CD pipeline
 - [ ] Add support for subtree-based sharding
 - [ ] Add support for forward error correction (FEC)
 - [ ] Add support for sequence numbering
