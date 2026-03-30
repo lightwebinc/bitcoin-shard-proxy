@@ -13,8 +13,10 @@ import (
 	"fmt"
 	"log"
 	"net"
+	"os"
 	"strings"
 	"sync/atomic"
+	"time"
 
 	"golang.org/x/sys/unix"
 
@@ -26,6 +28,7 @@ func main() {
 	port := flag.Int("port", 9001, "UDP port to listen on")
 	groupsFlag := flag.String("groups", "ff02::0,ff02::1", "comma-separated multicast group addresses to join")
 	count := flag.Int("count", 0, "exit after receiving this many frames (0 = run forever)")
+	timeout := flag.Duration("timeout", 0, "exit with failure after this duration if count not reached (0 = no timeout)")
 	flag.Parse()
 
 	ifi, err := net.InterfaceByName(*iface)
@@ -73,6 +76,20 @@ func main() {
 	done := make(chan struct{})
 
 	go recvLoop(fd, *count, &received, done)
+
+	if *timeout > 0 {
+		go func() {
+			timer := time.NewTimer(*timeout)
+			defer timer.Stop()
+			select {
+			case <-timer.C:
+				log.Printf("timeout after %s: only received %d/%d frames", *timeout, received.Load(), *count)
+				unix.Close(fd)
+				os.Exit(1)
+			case <-done:
+			}
+		}()
+	}
 
 	<-done
 	unix.Close(fd)
