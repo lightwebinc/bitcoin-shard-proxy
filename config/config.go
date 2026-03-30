@@ -13,7 +13,7 @@
 //	-shard-bits      SHARD_BITS       2             Key bit width (1–24)
 //	-scope           MC_SCOPE         site          Multicast scope
 //	-workers         NUM_WORKERS      runtime.NumCPU  Worker goroutine count
-//	-debug           —                false         Per-packet logging + loopback
+//	-debug           DEBUG            false         Per-packet logging + loopback
 //	-metrics-addr    METRICS_ADDR     :9100         HTTP bind for /metrics, /healthz, /readyz
 //	-instance        INSTANCE_ID      hostname      OTel service.instance.id
 //	-otlp-endpoint   OTLP_ENDPOINT    ""            OTLP gRPC endpoint (empty = disabled)
@@ -96,7 +96,7 @@ func Load() (*Config, error) {
 		"multicast scope: link | site | org | global")
 	flag.StringVar(&c.MCBaseAddr, "mc-base-addr", envStr("MC_BASE_ADDR", ""),
 		"base IPv6 address for assigned multicast address space (bytes 2-12)")
-	flag.BoolVar(&c.Debug, "debug", false,
+	flag.BoolVar(&c.Debug, "debug", envBool("DEBUG", false),
 		"enable per-packet debug logging and multicast loopback (single-host testing)")
 	flag.StringVar(&c.MetricsAddr, "metrics-addr", envStr("METRICS_ADDR", ":9100"),
 		"HTTP bind address for /metrics, /healthz, /readyz")
@@ -189,6 +189,17 @@ func envInt(key string, def int) int {
 	if v := os.Getenv(key); v != "" {
 		if n, err := strconv.Atoi(v); err == nil {
 			return n
+		}
+	}
+	return def
+}
+
+// envBool returns the boolean value of environment variable key, or def if
+// the variable is unset, empty, or not parseable as a bool.
+func envBool(key string, def bool) bool {
+	if v := os.Getenv(key); v != "" {
+		if b, err := strconv.ParseBool(v); err == nil {
+			return b
 		}
 	}
 	return def

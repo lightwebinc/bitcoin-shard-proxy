@@ -3,6 +3,7 @@ package worker
 import (
 	"errors"
 	"fmt"
+	"log/slog"
 	"net"
 	"syscall"
 	"testing"
@@ -227,7 +228,7 @@ func TestProbeEgressSocketLoopback(t *testing.T) {
 	// On loopback with a real UDP socket the probe should either succeed or
 	// return a soft error (non-fatal). It must never return a hard error that
 	// would prevent startup on a properly configured host.
-	if err := probeEgressSocket(conn, iface); err != nil {
+	if err := probeEgressSocket(slog.Default(), conn, iface); err != nil {
 		t.Errorf("probeEgressSocket on loopback: unexpected hard error: %v", err)
 	}
 }
@@ -239,7 +240,7 @@ func TestProbeEgressSocketClosedConn(t *testing.T) {
 	// (EBADF is treated as soft).
 	conn.Close()
 	// Should not panic; soft or hard is acceptable but must not crash.
-	_ = probeEgressSocket(conn, iface)
+	_ = probeEgressSocket(slog.Default(), conn, iface)
 }
 
 func TestProcessMultipleTargets(t *testing.T) {

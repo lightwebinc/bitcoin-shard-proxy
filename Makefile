@@ -2,7 +2,7 @@ BINARY := bitcoin-shard-proxy
 SEND   := send-test-frames
 RECV   := recv-test-frames
 
-.PHONY: all test clean
+.PHONY: all test test-e2e clean
 
 all: $(BINARY) $(SEND) $(RECV)
 
@@ -17,6 +17,9 @@ $(RECV):
 
 test:
 	go test ./frame/... ./shard/...
+
+test-e2e: $(BINARY) $(SEND) $(RECV)
+	PATH="$(CURDIR):$$PATH" sh test/run-e2e.sh
 
 clean:
 	rm -f $(BINARY) $(SEND) $(RECV)

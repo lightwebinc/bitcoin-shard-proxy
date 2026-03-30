@@ -165,27 +165,33 @@ func (w *Worker) Run(listenAddr string, listenPort int, done <-chan struct{}) er
 		}
 		udpEgress := egressConn.(*net.UDPConn)
 
-		egressFile, err := udpEgress.File()
+		rawConn, err := udpEgress.SyscallConn()
 		if err != nil {
 			_ = udpEgress.Close()
-			return fmt.Errorf("worker %d: get UDP file descriptor(%s): %w", w.id, iface.Name, err)
+			return fmt.Errorf("worker %d: SyscallConn(%s): %w", w.id, iface.Name, err)
 		}
-
-		fd := int(egressFile.Fd())
-		if err := unix.SetsockoptInt(fd, unix.IPPROTO_IPV6, unix.IPV6_MULTICAST_IF, iface.Index); err != nil {
-			_ = egressFile.Close()
+		var setsockoptErr error
+		if err := rawConn.Control(func(fd uintptr) {
+			if err := unix.SetsockoptInt(int(fd), unix.IPPROTO_IPV6, unix.IPV6_MULTICAST_IF, iface.Index); err != nil {
+				setsockoptErr = fmt.Errorf("IPV6_MULTICAST_IF: %w", err)
+				return
+			}
+			if err := unix.SetsockoptInt(int(fd), unix.IPPROTO_IPV6, unix.IPV6_MULTICAST_LOOP, loopback); err != nil {
+				w.log.Warn("could not configure multicast loopback", "iface", iface.Name, "err", err)
+			}
+		}); err != nil {
 			_ = udpEgress.Close()
-			return fmt.Errorf("worker %d: SetMulticastInterface(%s): %w", w.id, iface.Name, err)
+			return fmt.Errorf("worker %d: rawConn.Control(%s): %w", w.id, iface.Name, err)
 		}
-		if err := unix.SetsockoptInt(fd, unix.IPPROTO_IPV6, unix.IPV6_MULTICAST_LOOP, loopback); err != nil {
-			w.log.Warn("could not configure multicast loopback", "iface", iface.Name, "err", err)
+		if setsockoptErr != nil {
+			_ = udpEgress.Close()
+			return fmt.Errorf("worker %d: SetMulticastInterface(%s): %w", w.id, iface.Name, setsockoptErr)
 		}
-		_ = egressFile.Close()
 
 		// Probe the socket on worker 0 only — all workers use the same
 		// interfaces, so one probe per interface at startup is sufficient.
 		if w.id == 0 {
-			if err := probeEgressSocket(udpEgress, iface); err != nil {
+			if err := probeEgressSocket(w.log, udpEgress, iface); err != nil {
 				_ = udpEgress.Close()
 				return fmt.Errorf("worker %d: egress probe(%s): %w", w.id, iface.Name, err)
 			}
@@ -266,6 +272,7 @@ func (w *Worker) process(targets []egressTarget, raw []byte, src net.Addr) {
 	dst := w.engine.Addr(groupIdx, w.port)
 
 	for _, tgt := range targets {
+		dst.Zone = tgt.iface.Name
 		if _, err := tgt.conn.WriteTo(raw, dst); err != nil {
 			w.log.Warn("WriteTo error", "iface", tgt.iface.Name, "dst", dst, "err", err)
 			if w.rec != nil {
@@ -295,26 +302,25 @@ func (w *Worker) process(targets []egressTarget, raw []byte, src net.Addr) {
 // misconfigurations — missing routes, policy drops, unsupported tunnel types —
 // at startup rather than silently under load.
 //
-// Hard errors (ENETUNREACH, EPERM, EADDRNOTAVAIL) cause a non-nil return so
-// the caller can fail fast. Any other error is treated as a soft warning and
-// does not prevent startup; the interface may still work for unicast or the
-// error may be transient.
-func probeEgressSocket(conn *net.UDPConn, iface *net.Interface) error {
+// Hard errors (EPERM, EADDRNOTAVAIL) cause a non-nil return so the caller
+// can fail fast. ENETUNREACH is treated as a warning — the route may not
+// exist yet (e.g. added after startup) but the socket is otherwise valid.
+// Any other error is also treated as a soft warning.
+func probeEgressSocket(log *slog.Logger, conn *net.UDPConn, iface *net.Interface) error {
 	dst := &net.UDPAddr{
 		IP:   net.ParseIP("ff02::1"),
 		Port: 9, // discard port — no listener required
-		Zone: iface.Name,
 	}
 	_, err := conn.WriteTo([]byte{}, dst)
 	if err == nil {
 		return nil
 	}
-	if isErrno(err, syscall.ENETUNREACH) ||
-		isErrno(err, syscall.EPERM) ||
+	if isErrno(err, syscall.EPERM) ||
 		isErrno(err, syscall.EADDRNOTAVAIL) {
 		return fmt.Errorf("interface not usable for multicast egress: %w", err)
 	}
-	// Soft: log-worthy but not fatal (e.g. ENOBUFS, filtered ICMP unreachable).
+	// Soft: ENETUNREACH (missing route) and other errors are warnings only.
+	log.Warn("egress probe warning", "iface", iface.Name, "err", err)
 	return nil
 }
 

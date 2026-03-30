@@ -14,6 +14,9 @@ import (
 	"log"
 	"net"
 	"strings"
+	"sync/atomic"
+
+	"golang.org/x/sys/unix"
 
 	"github.com/jefflightweb/bitcoin-shard-proxy/frame"
 )
@@ -22,6 +25,7 @@ func main() {
 	iface := flag.String("iface", "lo0", "interface to join multicast groups on (lo on Linux)")
 	port := flag.Int("port", 9001, "UDP port to listen on")
 	groupsFlag := flag.String("groups", "ff02::0,ff02::1", "comma-separated multicast group addresses to join")
+	count := flag.Int("count", 0, "exit after receiving this many frames (0 = run forever)")
 	flag.Parse()
 
 	ifi, err := net.InterfaceByName(*iface)
@@ -29,52 +33,77 @@ func main() {
 		log.Fatalf("interface %q: %v", *iface, err)
 	}
 
-	groups := strings.Split(*groupsFlag, ",")
-	done := make(chan struct{})
-
-	for _, g := range groups {
-		g = strings.TrimSpace(g)
-		go func(group string) {
-			addr := &net.UDPAddr{
-				IP:   net.ParseIP(group),
-				Port: *port,
-			}
-			if addr.IP == nil {
-				log.Printf("invalid group address %q, skipping", group)
-				return
-			}
-			conn, err := net.ListenMulticastUDP("udp6", ifi, addr)
-			if err != nil {
-				log.Printf("join %s on %s: %v", group, ifi.Name, err)
-				return
-			}
-			defer func() {
-				if err := conn.Close(); err != nil {
-					log.Printf("close conn %s: %v", group, err)
-				}
-			}()
-			log.Printf("joined %-20s on %s", group, ifi.Name)
-			recvLoop(conn, group)
-		}(g)
+	// Open a single IPv6 UDP socket with SO_REUSEPORT + SO_REUSEADDR so it
+	// can share port 9001 with other processes, then join every requested
+	// multicast group on the socket individually via IPV6_JOIN_GROUP.
+	// Using one socket for all groups avoids the EADDRINUSE error that occurs
+	// when net.ListenMulticastUDP tries to bind a second socket to the same port.
+	fd, err := unix.Socket(unix.AF_INET6, unix.SOCK_DGRAM, unix.IPPROTO_UDP)
+	if err != nil {
+		log.Fatalf("socket: %v", err)
+	}
+	if err := unix.SetsockoptInt(fd, unix.SOL_SOCKET, unix.SO_REUSEADDR, 1); err != nil {
+		log.Fatalf("SO_REUSEADDR: %v", err)
+	}
+	if err := unix.SetsockoptInt(fd, unix.SOL_SOCKET, unix.SO_REUSEPORT, 1); err != nil {
+		log.Fatalf("SO_REUSEPORT: %v", err)
+	}
+	if err := unix.Bind(fd, &unix.SockaddrInet6{Port: *port}); err != nil {
+		log.Fatalf("bind :%d: %v", *port, err)
 	}
 
-	<-done // block until interrupted
-}
-
-func recvLoop(conn *net.UDPConn, group string) {
-	buf := make([]byte, 65536)
-	for {
-		n, src, err := conn.ReadFromUDP(buf)
-		if err != nil {
-			log.Printf("[%s] read error: %v", group, err)
-			return
-		}
-		f, err := frame.Decode(buf[:n])
-		if err != nil {
-			log.Printf("[%s] decode error from %s: %v", group, src, err)
+	groups := strings.Split(*groupsFlag, ",")
+	for _, g := range groups {
+		g = strings.TrimSpace(g)
+		ip := net.ParseIP(g)
+		if ip == nil {
+			log.Printf("invalid group address %q, skipping", g)
 			continue
 		}
-		fmt.Printf("recv  group=%-22s  src=%-26s  txid[0:4]=%08X  payload_len=%d\n",
-			group, src, binary.BigEndian.Uint32(f.TxID[0:4]), len(f.Payload))
+		ip16 := ip.To16()
+		mreq := &unix.IPv6Mreq{Interface: uint32(ifi.Index)}
+		copy(mreq.Multiaddr[:], ip16)
+		if err := unix.SetsockoptIPv6Mreq(fd, unix.IPPROTO_IPV6, unix.IPV6_JOIN_GROUP, mreq); err != nil {
+			log.Fatalf("IPV6_JOIN_GROUP %s on %s: %v", g, ifi.Name, err)
+		}
+		log.Printf("joined %-20s on %s", g, ifi.Name)
+	}
+
+	var received atomic.Int64
+	done := make(chan struct{})
+
+	go recvLoop(fd, *count, &received, done)
+
+	<-done
+	unix.Close(fd)
+}
+
+func recvLoop(fd int, limit int, received *atomic.Int64, done chan struct{}) {
+	buf := make([]byte, 65536)
+	for {
+		n, from, err := unix.Recvfrom(fd, buf, 0)
+		if err != nil {
+			// fd was closed (shutdown)
+			return
+		}
+		sa, ok := from.(*unix.SockaddrInet6)
+		if !ok {
+			continue
+		}
+		src := fmt.Sprintf("[%s]:%d", net.IP(sa.Addr[:]).String(), sa.Port)
+		f, err := frame.Decode(buf[:n])
+		if err != nil {
+			log.Printf("decode error from %s: %v", src, err)
+			continue
+		}
+		fmt.Printf("recv  src=%-26s  txid[0:4]=%08X  payload_len=%d\n",
+			src, binary.BigEndian.Uint32(f.TxID[0:4]), len(f.Payload))
+		if limit > 0 {
+			if received.Add(1) >= int64(limit) {
+				log.Printf("received %d frames, exiting", limit)
+				close(done)
+				return
+			}
+		}
 	}
 }

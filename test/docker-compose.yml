@@ -1,0 +1,16 @@
+name: bsp-e2e
+
+services:
+  e2e:
+    build:
+      context: ..
+      dockerfile: test/Dockerfile.e2e
+    network_mode: host
+    cap_add:
+      - NET_ADMIN
+    environment:
+      SHARD_BITS: "${SHARD_BITS:-2}"
+      RECV_COUNT: "${RECV_COUNT:-4}"
+      LISTEN_PORT: "9000"
+      EGRESS_PORT: "9001"
+    restart: "no"
