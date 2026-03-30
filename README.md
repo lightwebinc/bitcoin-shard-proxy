@@ -72,6 +72,7 @@ protocol), not the reversed display order shown by block explorers.
 - Linux kernel 3.9+, FreeBSD 12.3+ (for `SO_REUSEPORT`)
 - IPv6 enabled on the egress interface(s)
 - Multicast routing / MLD snooping configured for your subscriber fabric
+- Bitcoin SV ingress transaction packets in BRC-12 format
 
 ## Build
 
