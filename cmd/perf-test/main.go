@@ -288,39 +288,55 @@ func ifaceStatsDelta(before, after *ifaceStats) *ifaceStats {
 // ---------------------------------------------------------------------------
 
 type tcpdumpProc struct {
-	vm  string
-	cmd *exec.Cmd
+	vm        string
+	cmd       *exec.Cmd
+	stdinPipe io.WriteCloser
 }
 
 func startTcpdump(vm, iface string) (*tcpdumpProc, error) {
+	// Remove any stale pcap from a previous run so tshark never reads stale data.
+	_, _ = lxcExec(vm, "rm", "-f", "/tmp/perf-capture.pcap")
+
 	cmd := exec.Command("lxc", "exec", vm, "--",
-		"tcpdump", "-i", iface, "-n", "ip6 and udp", "-w", "/tmp/perf-capture.pcap")
-	// Don't capture stdout/stderr so it runs in background.
+		"tcpdump", "-p", "-i", iface, "-n", "ip6 and udp", "-w", "/tmp/perf-capture.pcap")
+	// Provide a live stdin pipe — without it, lxc exec may kill the container
+	// process when it detects /dev/null stdin (EOF).
+	stdinPipe, err := cmd.StdinPipe()
+	if err != nil {
+		return nil, fmt.Errorf("stdin pipe for tcpdump on %s: %w", vm, err)
+	}
 	cmd.Stdout = nil
-	cmd.Stderr = nil
+	cmd.Stderr = os.Stderr // surface tcpdump errors immediately
 	if err := cmd.Start(); err != nil {
 		return nil, fmt.Errorf("start tcpdump on %s: %w", vm, err)
 	}
-	return &tcpdumpProc{vm: vm, cmd: cmd}, nil
+	return &tcpdumpProc{vm: vm, cmd: cmd, stdinPipe: stdinPipe}, nil
 }
 
 func stopTcpdump(t *tcpdumpProc) {
 	// Kill tcpdump inside the VM.
 	_, _ = lxcExec(t.vm, "pkill", "-f", "tcpdump.*perf-capture")
+	// Close stdin pipe so lxc exec can exit cleanly.
+	_ = t.stdinPipe.Close()
 	// Wait for our lxc exec process to finish.
 	_ = t.cmd.Wait()
 }
 
 // tsharkGroupCounts parses the pcap on a receiver VM and returns per-group packet counts.
 func tsharkGroupCounts(vm string) (map[string]int64, error) {
-	out, err := lxcExec(vm, "tshark", "-r", "/tmp/perf-capture.pcap",
-		"-T", "fields", "-e", "ipv6.dst", "-Y", "udp")
-	if err != nil {
-		// tshark may not be installed; fall back gracefully.
-		return nil, fmt.Errorf("tshark on %s: %w", vm, err)
+	cmdArgs := []string{"exec", vm, "--",
+		"tshark", "-r", "/tmp/perf-capture.pcap",
+		"-T", "fields", "-e", "ipv6.dst", "-Y", "udp"}
+	cmd := exec.Command("lxc", cmdArgs...)
+	// Capture stdout only; discard stderr to avoid "Running as root" warnings.
+	var stdout, stderr strings.Builder
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		return nil, fmt.Errorf("tshark on %s: %w\nstderr: %s", vm, err, stderr.String())
 	}
 	counts := make(map[string]int64)
-	scanner := bufio.NewScanner(strings.NewReader(out))
+	scanner := bufio.NewScanner(strings.NewReader(stdout.String()))
 	for scanner.Scan() {
 		addr := strings.TrimSpace(scanner.Text())
 		if addr != "" {
@@ -543,6 +559,17 @@ func groupsForReceiver(vm string) []string {
 		return g
 	}
 	return nil
+}
+
+// allGroups returns the full list of multicast group addresses for the
+// configured shard space, e.g. ff05::0 through ff05::ff for shard_bits=8.
+func allGroups(shardBits uint) []string {
+	numGroups := uint32(1) << shardBits
+	groups := make([]string, numGroups)
+	for i := uint32(0); i < numGroups; i++ {
+		groups[i] = fmt.Sprintf("ff05::%x", i)
+	}
+	return groups
 }
 
 // ---------------------------------------------------------------------------
