@@ -35,3 +35,5 @@ go.work.sum
 /bitcoin-shard-proxy
 /send-test-frames
 /recv-test-frames
+/perf-test
+/benchmark
