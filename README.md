@@ -232,8 +232,10 @@ bitcoin-shard-proxy/
 ├── cmd/
 │   ├── send-test-frames/
 │   │   └── main.go          Test sender: crafts transaction frames and sends to proxy
-│   └── recv-test-frames/
-│       └── main.go          Test receiver: joins multicast groups, prints frames
+│   ├── recv-test-frames/
+│   │   └── main.go          Test receiver: joins multicast groups, prints frames
+│   └── perf-test/
+│       └── main.go          LXD lab throughput tester: drives proxy + collects Prometheus/pcap/interface stats
 ├── config/
 │   └── config.go            Flag + env parsing, validation
 ├── frame/
@@ -265,6 +267,24 @@ bitcoin-shard-proxy/
 ```bash
 make test
 ```
+
+### LXD lab throughput test
+
+`perf-test` drives the full stack from outside the VMs: it sends BRC-12 frames to the proxy, scrapes Prometheus metrics before and after, collects `ip -s link` deltas from all nodes, captures per-receiver pcaps with `tcpdump`, post-processes them with `tshark` to produce a per-group delivery matrix, and writes a Markdown report.
+
+```bash
+make perf-test
+
+./perf-test \
+  -proxy-addr '[fd20::2]:9000' \
+  -metrics-url http://10.10.10.20:9100 \
+  -shard-bits 2 -pps 10000 -duration 5m \
+  -payload-min 256 -payload-max 512 \
+  -lxd -receivers recv1,recv2,recv3 \
+  -output report-10k.md
+```
+
+See [bitcoin-multicast-test/testing/](https://github.com/lightwebinc/bitcoin-multicast-test/tree/main/testing) for results at 10k, 25k, and 50k pps.
 
 ### End-to-end test
 
