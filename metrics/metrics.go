@@ -67,11 +67,13 @@ type ifaceGroupKey struct {
 // Recorder holds all pre-allocated OTel instrument handles and readiness
 // state. Construct with [New]; pass the pointer to every worker.
 type Recorder struct {
-	provider   *sdkmetric.MeterProvider
-	promReg    *promclient.Registry
-	numWorkers int
-	startTime  time.Time
-	readyCount atomic.Int32
+	provider    *sdkmetric.MeterProvider
+	promReg     promclient.Gatherer
+	promOtelReg *promclient.Registry
+	runtimeReg  *promclient.Registry
+	numWorkers  int
+	startTime   time.Time
+	readyCount  atomic.Int32
 
 	// Per-packet ingress — labels: worker, iface
 	rxPackets  metric.Int64Counter
@@ -132,6 +134,11 @@ func New(instanceID string, numWorkers int, otlpEndpoint string, otlpInterval ti
 	promExp, err := prometheusexporter.New(
 		prometheusexporter.WithRegisterer(reg),
 	)
+
+	// Separate registry for Go runtime and process metrics.
+	runtimeReg := promclient.NewRegistry()
+	runtimeReg.MustRegister(promclient.NewGoCollector())
+	runtimeReg.MustRegister(promclient.NewProcessCollector(promclient.ProcessCollectorOpts{}))
 	if err != nil {
 		return nil, fmt.Errorf("metrics: prometheus exporter: %w", err)
 	}
@@ -166,7 +173,9 @@ func New(instanceID string, numWorkers int, otlpEndpoint string, otlpInterval ti
 
 	r := &Recorder{
 		provider:     mp,
-		promReg:      reg,
+		promReg:      promclient.Gatherers{reg, runtimeReg},
+		promOtelReg:  reg,
+		runtimeReg:   runtimeReg,
 		numWorkers:   numWorkers,
 		startTime:    time.Now(),
 		activeGroups: make(map[string]map[uint32]struct{}),
