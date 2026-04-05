@@ -22,6 +22,8 @@ group_index = txid[0:4] (big-endian uint32) >> (32 - SHARD_BITS)
 IPv6 address = FF<scope>::<base_addr_bytes><group_index as 24-bit big-endian>
 ```
 
+The top `SHARD_BITS` bits of the first four bytes of the txid are extracted via a right-shift, producing an integer in the range `[0, 2ᴺ)` that indexes one of the 2ᴺ multicast groups. That index is then packed into the low 24 bits of the IPv6 multicast address, with the scope byte and an optional operator-assigned base address filling the remaining fields.
+
 The multicast address consists of:
 
 - **FF\<scope\>**: 16-bit multicast prefix with scope (e.g., FF05 for site-local)
