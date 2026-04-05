@@ -6,10 +6,10 @@
 //	send-test-frames [-addr host:port] [-count N] [-interval ms] [-shard-bits N] [-spread]
 //
 // Each frame's txid prefix increments by 1, fanning traffic across shard groups.
-// With -spread, exactly one frame is sent per group using maximally-spaced txids,
-// guaranteeing full coverage regardless of -count. The predicted destination
-// multicast group is printed for each frame so output can be compared against
-// recv-test-frames.
+// With -spread, one frame is sent per group per cycle using maximally-spaced txids.
+// -count controls the number of spread cycles (0 = infinite). The predicted
+// destination multicast group is printed for each frame so output can be compared
+// against recv-test-frames.
 package main
 
 import (
@@ -29,7 +29,7 @@ func main() {
 	count := flag.Int("count", 16, "number of frames to send (0 = infinite)")
 	intervalMs := flag.Int("interval", 200, "milliseconds between frames")
 	shardBits := flag.Uint("shard-bits", 2, "shard-bits the proxy is configured with (for predicted group display)")
-	spread := flag.Bool("spread", false, "send exactly one frame per group with maximally-spaced txids (ignores -count)")
+	spread := flag.Bool("spread", false, "send one frame per group per cycle with maximally-spaced txids; -count sets cycles (0 = infinite)")
 	flag.Parse()
 
 	conn, err := net.Dial("udp6", *addr)
@@ -51,15 +51,17 @@ func main() {
 	fmt.Printf("%-6s  %-10s  %-6s  %s\n", "frame", "txid[0:4]", "group", "expected_dst")
 
 	if *spread {
-		// Send exactly one frame per group. The txid prefix for group g is
+		// Send one frame per group per cycle. The txid prefix for group g is
 		// g << (32 - shardBits), placing g in the top shardBits bits.
 		numGroups := int(e.NumGroups())
 		step := uint32(1) << (32 - *shardBits)
-		for g := 0; g < numGroups; g++ {
-			f := &frame.Frame{Payload: payload}
-			txidPrefix := uint32(g) * step
-			binary.BigEndian.PutUint32(f.TxID[0:4], txidPrefix)
-			sendFrame(conn, e, f, buf, g, interval)
+		for cycle := 0; *count == 0 || cycle < *count; cycle++ {
+			for g := 0; g < numGroups; g++ {
+				f := &frame.Frame{Payload: payload}
+				txidPrefix := uint32(g) * step
+				binary.BigEndian.PutUint32(f.TxID[0:4], txidPrefix)
+				sendFrame(conn, e, f, buf, cycle*numGroups+g, interval)
+			}
 		}
 		return
 	}
