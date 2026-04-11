@@ -3,11 +3,14 @@ package worker
 import (
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"syscall"
 	"testing"
+	"time"
 
 	"github.com/jefflightweb/bitcoin-shard-proxy/forwarder"
+	"github.com/jefflightweb/bitcoin-shard-proxy/frame"
 	"github.com/jefflightweb/bitcoin-shard-proxy/sequence"
 	"github.com/jefflightweb/bitcoin-shard-proxy/shard"
 )
@@ -139,4 +142,137 @@ func TestUnwrapChain(t *testing.T) {
 	if unwrap(outer) != inner {
 		t.Error("unwrap should return the wrapped inner error")
 	}
+}
+
+// ── NewTCPIngress ─────────────────────────────────────────────────────────────
+
+func TestNewTCPIngress(t *testing.T) {
+	fwd := makeTestForwarder()
+	ifaces := []*net.Interface{{Index: 1, Name: "lo"}}
+	ti := NewTCPIngress(fwd, ifaces, nil)
+	if ti == nil {
+		t.Fatal("NewTCPIngress returned nil")
+	}
+	if ti.fwd == nil {
+		t.Error("fwd should not be nil")
+	}
+	if ti.log == nil {
+		t.Error("log should not be nil")
+	}
+}
+
+// ── handleConn ────────────────────────────────────────────────────────────────
+
+// dialHandleConn opens a TCP loopback connection, runs handleConn in a
+// goroutine, calls write() to populate the server side, then waits for
+// handleConn to return (with a short timeout to prevent hangs).
+func dialHandleConn(t *testing.T, write func(net.Conn)) {
+	t.Helper()
+	ln, err := net.Listen("tcp6", "[::1]:0")
+	if err != nil {
+		t.Skipf("TCP loopback unavailable: %v", err)
+	}
+	defer ln.Close()
+
+	clientConn, err := net.Dial("tcp6", ln.Addr().String())
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+
+	serverConn, err := ln.Accept()
+	if err != nil {
+		t.Fatalf("accept: %v", err)
+	}
+
+	fwd := makeTestForwarder()
+	ifaces := []*net.Interface{{Index: 1, Name: "lo"}}
+	ti := NewTCPIngress(fwd, ifaces, nil)
+
+	done := make(chan struct{})
+	go func() {
+		ti.handleConn(serverConn, nil)
+		close(done)
+	}()
+
+	write(clientConn)
+	clientConn.Close()
+
+	select {
+	case <-done:
+	case <-time.After(3 * time.Second):
+		t.Error("handleConn did not return within timeout")
+	}
+}
+
+func buildTCPFrame(t *testing.T, txidByte byte, seq uint64, payload []byte) []byte {
+	t.Helper()
+	f := &frame.Frame{ShardSeqNum: seq, Payload: payload}
+	f.TxID[0] = txidByte
+	buf := make([]byte, frame.HeaderSize+len(payload))
+	n, err := frame.Encode(f, buf)
+	if err != nil {
+		t.Fatalf("frame.Encode: %v", err)
+	}
+	return buf[:n]
+}
+
+func TestHandleConnValidFrame(t *testing.T) {
+	raw := buildTCPFrame(t, 0xAB, 1, []byte("hello"))
+	dialHandleConn(t, func(conn net.Conn) {
+		_, _ = conn.Write(raw)
+	})
+}
+
+func TestHandleConnEmptyConn(t *testing.T) {
+	dialHandleConn(t, func(_ net.Conn) {
+		// write nothing — immediate EOF in handleConn
+	})
+}
+
+func TestHandleConnTruncatedHeader(t *testing.T) {
+	dialHandleConn(t, func(conn net.Conn) {
+		_, _ = conn.Write([]byte{0xE3, 0xE1, 0xF3}) // only 3 bytes
+	})
+}
+
+func TestHandleConnBadMagic(t *testing.T) {
+	hdr := make([]byte, frame.HeaderSize)
+	hdr[0] = 0x00 // bad magic — all zeros
+	dialHandleConn(t, func(conn net.Conn) {
+		_, _ = conn.Write(hdr)
+	})
+}
+
+func TestHandleConnV1Frame(t *testing.T) {
+	hdr := make([]byte, frame.HeaderSize)
+	hdr[0], hdr[1], hdr[2], hdr[3] = 0xE3, 0xE1, 0xF3, 0xE8
+	hdr[4], hdr[5] = 0x02, 0xBF
+	hdr[6] = 0x01 // v1 — should be rejected
+	dialHandleConn(t, func(conn net.Conn) {
+		_, _ = conn.Write(hdr)
+	})
+}
+
+func TestHandleConnMultipleFrames(t *testing.T) {
+	raw1 := buildTCPFrame(t, 0xAB, 1, nil)
+	raw2 := buildTCPFrame(t, 0xCD, 2, []byte("world"))
+	dialHandleConn(t, func(conn net.Conn) {
+		_, _ = io.MultiWriter(conn).Write(append(raw1, raw2...))
+	})
+}
+
+func TestHandleConnPayloadTooLarge(t *testing.T) {
+	hdr := make([]byte, frame.HeaderSize)
+	hdr[0], hdr[1], hdr[2], hdr[3] = 0xE3, 0xE1, 0xF3, 0xE8
+	hdr[4], hdr[5] = 0x02, 0xBF
+	hdr[6] = frame.FrameVerV2
+	// PayLen at bytes 80-83: set to MaxPayload + 1
+	oversize := uint32(frame.MaxPayload + 1)
+	hdr[80] = byte(oversize >> 24)
+	hdr[81] = byte(oversize >> 16)
+	hdr[82] = byte(oversize >> 8)
+	hdr[83] = byte(oversize)
+	dialHandleConn(t, func(conn net.Conn) {
+		_, _ = conn.Write(hdr)
+	})
 }

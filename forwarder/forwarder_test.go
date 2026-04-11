@@ -1,7 +1,10 @@
 package forwarder
 
 import (
+	"fmt"
+	"log/slog"
 	"net"
+	"syscall"
 	"testing"
 
 	"github.com/jefflightweb/bitcoin-shard-proxy/frame"
@@ -223,4 +226,102 @@ func TestProcessMultipleTargets(t *testing.T) {
 	fw := makeForwarder(true, nil, nil)
 	raw := buildV2Frame(t, 0xAB, 1, 0, nil)
 	fw.Process(makeTargets(t, conn1, conn2), encodeBuf(), raw, fakeAddr{}, 0)
+}
+
+func TestProcessDebugMode(t *testing.T) {
+	engine := shard.New(0xFF05, [11]byte{}, 8)
+	counters := sequence.NewCounters(engine.NumGroups())
+	fw := New(engine, counters, 9001, false, nil, nil, true, nil)
+	raw := buildV2Frame(t, 0xAB, 1, 0, nil)
+	conn, _ := openLoopbackUDP(t)
+	fw.Process(makeTargets(t, conn), encodeBuf(), raw, fakeAddr{}, 0)
+}
+
+// ── OpenTargets / CloseTargets ────────────────────────────────────────────────
+
+func realIface(t *testing.T) *net.Interface {
+	t.Helper()
+	ifaces, err := net.Interfaces()
+	if err != nil || len(ifaces) == 0 {
+		t.Skip("no network interfaces available")
+	}
+	return &ifaces[0]
+}
+
+func TestOpenAndCloseTargets(t *testing.T) {
+	iface := realIface(t)
+	fw := makeForwarder(false, nil, nil)
+	targets, err := fw.OpenTargets([]*net.Interface{iface}, false)
+	if err != nil {
+		t.Skipf("OpenTargets(%s): %v", iface.Name, err)
+	}
+	if len(targets) != 1 {
+		t.Errorf("len(targets) = %d, want 1", len(targets))
+	}
+	CloseTargets(targets, slog.Default())
+}
+
+func TestOpenTargetsEmpty(t *testing.T) {
+	fw := makeForwarder(false, nil, nil)
+	targets, err := fw.OpenTargets(nil, false)
+	if err != nil {
+		t.Errorf("OpenTargets(nil): unexpected error: %v", err)
+	}
+	if len(targets) != 0 {
+		t.Errorf("expected 0 targets for nil ifaces, got %d", len(targets))
+	}
+}
+
+func TestOpenTargetsProbe(t *testing.T) {
+	iface := realIface(t)
+	fw := makeForwarder(false, nil, nil)
+	targets, err := fw.OpenTargets([]*net.Interface{iface}, true)
+	if err != nil {
+		t.Skipf("OpenTargets probe(%s): %v", iface.Name, err)
+	}
+	CloseTargets(targets, slog.Default())
+}
+
+// ── isErrno ───────────────────────────────────────────────────────────────────
+
+func TestIsErrnoMatch(t *testing.T) {
+	if !isErrno(syscall.EPERM, syscall.EPERM) {
+		t.Error("isErrno should match EPERM directly")
+	}
+}
+
+func TestIsErrnoNoMatch(t *testing.T) {
+	if isErrno(syscall.EPERM, syscall.EBADF) {
+		t.Error("isErrno should not match EBADF when err is EPERM")
+	}
+}
+
+func TestIsErrnoNil(t *testing.T) {
+	if isErrno(nil, syscall.EPERM) {
+		t.Error("isErrno(nil) should return false")
+	}
+}
+
+func TestIsErrnoWrapped(t *testing.T) {
+	err := fmt.Errorf("wrapped: %w", syscall.EACCES)
+	if !isErrno(err, syscall.EACCES) {
+		t.Error("isErrno should match wrapped errno")
+	}
+}
+
+// ── probeEgressSocket ─────────────────────────────────────────────────────────
+
+func TestProbeEgressSocketLoopback(t *testing.T) {
+	conn, _ := openLoopbackUDP(t)
+	iface := &net.Interface{Index: 1, Name: "lo"}
+	if err := probeEgressSocket(slog.Default(), conn, iface); err != nil {
+		t.Errorf("probeEgressSocket on loopback: unexpected hard error: %v", err)
+	}
+}
+
+func TestProbeEgressSocketClosedConn(t *testing.T) {
+	conn, _ := openLoopbackUDP(t)
+	iface := &net.Interface{Index: 1, Name: "lo"}
+	conn.Close()
+	_ = probeEgressSocket(slog.Default(), conn, iface)
 }

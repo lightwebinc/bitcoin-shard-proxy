@@ -4,6 +4,7 @@ import (
 	"flag"
 	"net"
 	"os"
+	"strings"
 	"testing"
 	"time"
 )
@@ -241,6 +242,174 @@ func TestEnvIntInvalid(t *testing.T) {
 	t.Setenv("TEST_ENV_INT_KEY", "not-a-number")
 	if got := envInt("TEST_ENV_INT_KEY", 7); got != 7 {
 		t.Errorf("got %d, want fallback 7", got)
+	}
+}
+
+func TestEnvBoolFallback(t *testing.T) {
+	os.Unsetenv("TEST_ENV_BOOL_KEY")
+	if got := envBool("TEST_ENV_BOOL_KEY", true); !got {
+		t.Error("envBool: expected fallback true")
+	}
+}
+
+func TestEnvBoolSet(t *testing.T) {
+	t.Setenv("TEST_ENV_BOOL_KEY", "true")
+	if got := envBool("TEST_ENV_BOOL_KEY", false); !got {
+		t.Error("envBool: expected true")
+	}
+}
+
+func TestEnvBoolSetFalse(t *testing.T) {
+	t.Setenv("TEST_ENV_BOOL_KEY", "false")
+	if got := envBool("TEST_ENV_BOOL_KEY", true); got {
+		t.Error("envBool: expected false")
+	}
+}
+
+func TestEnvBoolInvalid(t *testing.T) {
+	t.Setenv("TEST_ENV_BOOL_KEY", "not-a-bool")
+	if got := envBool("TEST_ENV_BOOL_KEY", true); !got {
+		t.Error("envBool: expected fallback true for invalid value")
+	}
+}
+
+// ── new v2 flag tests ───────────────────────────────────────────────────────────────
+
+func TestLoadUDPListenPortCustom(t *testing.T) {
+	iface := realIface(t)
+	cfg, err := parseArgs(t, []string{"-iface", iface, "-udp-listen-port", "9500"})
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.UDPListenPort != 9500 {
+		t.Errorf("UDPListenPort = %d, want 9500", cfg.UDPListenPort)
+	}
+}
+
+func TestLoadTCPListenPort(t *testing.T) {
+	iface := realIface(t)
+	cfg, err := parseArgs(t, []string{"-iface", iface, "-tcp-listen-port", "9100"})
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.TCPListenPort != 9100 {
+		t.Errorf("TCPListenPort = %d, want 9100", cfg.TCPListenPort)
+	}
+}
+
+func TestLoadTCPListenPortDefault(t *testing.T) {
+	iface := realIface(t)
+	cfg, err := parseArgs(t, []string{"-iface", iface})
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.TCPListenPort != 0 {
+		t.Errorf("TCPListenPort = %d, want 0 (disabled)", cfg.TCPListenPort)
+	}
+}
+
+func TestLoadProxySeqDisabled(t *testing.T) {
+	iface := realIface(t)
+	cfg, err := parseArgs(t, []string{"-iface", iface, "-proxy-seq=false"})
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.ProxySeqEnabled {
+		t.Error("ProxySeqEnabled should be false")
+	}
+}
+
+func TestLoadStaticSubtreeIDValid(t *testing.T) {
+	iface := realIface(t)
+	hex64 := strings.Repeat("ab", 32) // exactly 64 hex chars = 32 bytes
+	cfg, err := parseArgs(t, []string{"-iface", iface, "-static-subtree-id", hex64})
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if len(cfg.StaticSubtreeID) != 32 {
+		t.Errorf("StaticSubtreeID len = %d, want 32", len(cfg.StaticSubtreeID))
+	}
+	for i, b := range cfg.StaticSubtreeID {
+		if b != 0xAB {
+			t.Errorf("StaticSubtreeID[%d] = 0x%02X, want 0xAB", i, b)
+			break
+		}
+	}
+}
+
+func TestLoadStaticSubtreeIDInvalidHex(t *testing.T) {
+	iface := realIface(t)
+	_, err := parseArgs(t, []string{"-iface", iface, "-static-subtree-id", "notvalidhex"})
+	if err == nil {
+		t.Error("want error for invalid hex, got nil")
+	}
+}
+
+func TestLoadStaticSubtreeIDWrongLength(t *testing.T) {
+	iface := realIface(t)
+	_, err := parseArgs(t, []string{"-iface", iface, "-static-subtree-id", "abab"})
+	if err == nil {
+		t.Error("want error for wrong-length subtree ID, got nil")
+	}
+}
+
+func TestLoadStaticSubtreeIDPassthrough(t *testing.T) {
+	iface := realIface(t)
+	cfg, err := parseArgs(t, []string{"-iface", iface})
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.StaticSubtreeID != nil {
+		t.Error("StaticSubtreeID should be nil when not set")
+	}
+}
+
+func TestLoadStaticSubtreeHeightValid(t *testing.T) {
+	iface := realIface(t)
+	cfg, err := parseArgs(t, []string{"-iface", iface, "-static-subtree-height", "20"})
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.StaticSubtreeHeight == nil || *cfg.StaticSubtreeHeight != 20 {
+		t.Errorf("StaticSubtreeHeight = %v, want *20", cfg.StaticSubtreeHeight)
+	}
+}
+
+func TestLoadStaticSubtreeHeightZero(t *testing.T) {
+	iface := realIface(t)
+	cfg, err := parseArgs(t, []string{"-iface", iface, "-static-subtree-height", "0"})
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.StaticSubtreeHeight == nil || *cfg.StaticSubtreeHeight != 0 {
+		t.Errorf("StaticSubtreeHeight = %v, want *0", cfg.StaticSubtreeHeight)
+	}
+}
+
+func TestLoadStaticSubtreeHeightPassthrough(t *testing.T) {
+	iface := realIface(t)
+	cfg, err := parseArgs(t, []string{"-iface", iface})
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.StaticSubtreeHeight != nil {
+		t.Errorf("StaticSubtreeHeight should be nil when not set, got %v", cfg.StaticSubtreeHeight)
+	}
+}
+
+func TestLoadStaticSubtreeHeightInvalid(t *testing.T) {
+	iface := realIface(t)
+	_, err := parseArgs(t, []string{"-iface", iface, "-static-subtree-height", "256"})
+	if err == nil {
+		t.Error("want error for subtree height > 255, got nil")
+	}
+}
+
+func TestLoadStaticSubtreeHeightNotANumber(t *testing.T) {
+	iface := realIface(t)
+	_, err := parseArgs(t, []string{"-iface", iface, "-static-subtree-height", "twenty"})
+	if err == nil {
+		t.Error("want error for non-numeric subtree height, got nil")
 	}
 }
 

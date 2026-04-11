@@ -130,7 +130,7 @@ of `shard-bits`.
 ./send-test-frames -addr "[::1]:9000" -shard-bits 2 -count 10 -spread
 
 # Continuous: run indefinitely, cycling through all groups
-./send-test-frames -addr "[fd20::2]:9000' -shard-bits 2 -count 0 -interval 0 -spread
+./send-test-frames -addr "[fd20::2]:9000" -shard-bits 2 -count 0 -interval 0 -spread
 ```
 
 ### Subscriber join examples by shard-bits
