@@ -6,21 +6,26 @@
 // # Environment variable mapping
 //
 //	Flag             Env var          Default       Description
-//	-listen          LISTEN_ADDR      [::]          Ingress bind address
-//	-listen-port     LISTEN_PORT      9000          UDP listen port
-//	-iface           MULTICAST_IF     eth0          Comma-separated NICs for multicast egress
-//	-egress-port     EGRESS_PORT      9001          Destination port on groups
-//	-shard-bits      SHARD_BITS       2             Key bit width (1–24)
-//	-scope           MC_SCOPE         site          Multicast scope
-//	-workers         NUM_WORKERS      runtime.NumCPU  Worker goroutine count
-//	-debug           DEBUG            false         Per-packet logging + loopback
-//	-metrics-addr    METRICS_ADDR     :9100         HTTP bind for /metrics, /healthz, /readyz
-//	-instance        INSTANCE_ID      hostname      OTel service.instance.id
-//	-otlp-endpoint   OTLP_ENDPOINT    ""            OTLP gRPC endpoint (empty = disabled)
-//	-otlp-interval   OTLP_INTERVAL    30s           OTLP push interval
+//	-listen               LISTEN_ADDR           [::]      Ingress bind address
+//	-udp-listen-port      UDP_LISTEN_PORT       9000      UDP listen port
+//	-tcp-listen-port      TCP_LISTEN_PORT       0         TCP ingress port (0 = disabled)
+//	-iface                MULTICAST_IF          eth0      Comma-separated NICs for multicast egress
+//	-egress-port          EGRESS_PORT           9001      Destination port on groups
+//	-shard-bits           SHARD_BITS            2         Key bit width (1–24)
+//	-scope                MC_SCOPE              site      Multicast scope
+//	-workers              NUM_WORKERS           NumCPU    Worker goroutine count
+//	-proxy-seq            PROXY_SEQ             true      Assign ShardSeqNum fallback
+//	-static-subtree-id    STATIC_SUBTREE_ID     ""        Hex 32-byte SubtreeID override
+//	-static-subtree-height STATIC_SUBTREE_HEIGHT ""       SubtreeHeight override ("" or "0"–"255")
+//	-debug                DEBUG                 false     Per-packet logging + loopback
+//	-metrics-addr         METRICS_ADDR          :9100     HTTP bind for /metrics, /healthz, /readyz
+//	-instance             INSTANCE_ID           hostname  OTel service.instance.id
+//	-otlp-endpoint        OTLP_ENDPOINT         ""        OTLP gRPC endpoint (empty = disabled)
+//	-otlp-interval        OTLP_INTERVAL         30s       OTLP push interval
 package config
 
 import (
+	"encoding/hex"
 	"flag"
 	"fmt"
 	"net"
@@ -49,10 +54,11 @@ var Scopes = map[string]uint16{
 // after [Load] returns; treat the value as immutable.
 type Config struct {
 	// Network
-	ListenAddr   string   // e.g. "[::]"
-	ListenPort   int      // UDP port to receive BSV transaction frames
-	EgressIfaces []string // NIC names for multicast egress, e.g. ["eth0", "eth1"]
-	EgressPort   int      // Destination UDP port written into outgoing multicast datagrams
+	ListenAddr    string   // e.g. "[::]"
+	UDPListenPort int      // UDP port to receive BSV v2 transaction frames
+	TCPListenPort int      // TCP ingress port; 0 = disabled
+	EgressIfaces  []string // NIC names for multicast egress, e.g. ["eth0", "eth1"]
+	EgressPort    int      // Destination UDP port written into outgoing multicast datagrams
 
 	// Sharding
 	ShardBits     uint     // Number of txid prefix bits used as the group key (1–24)
@@ -65,6 +71,11 @@ type Config struct {
 	// Runtime
 	NumWorkers int  // Worker goroutine count; defaults to runtime.NumCPU()
 	Debug      bool // Enables per-packet debug logging and multicast loopback
+
+	// Sequencing and frame overrides
+	ProxySeqEnabled     bool   // Assign ShardSeqNum when sender leaves it 0 (default: true)
+	StaticSubtreeID     []byte // 32-byte SubtreeID override; nil = passthrough
+	StaticSubtreeHeight *uint8 // SubtreeHeight override; nil = passthrough; *0 is valid
 
 	// Observability
 	MetricsAddr  string        // HTTP bind address for /metrics, /healthz, /readyz
@@ -84,8 +95,10 @@ func Load() (*Config, error) {
 
 	flag.StringVar(&c.ListenAddr, "listen", envStr("LISTEN_ADDR", "[::]"),
 		"ingress bind address (without port)")
-	flag.IntVar(&c.ListenPort, "listen-port", envInt("LISTEN_PORT", 9000),
-		"UDP listen port for incoming BSV transaction frames")
+	flag.IntVar(&c.UDPListenPort, "udp-listen-port", envInt("UDP_LISTEN_PORT", 9000),
+		"UDP listen port for incoming BSV v2 transaction frames")
+	flag.IntVar(&c.TCPListenPort, "tcp-listen-port", envInt("TCP_LISTEN_PORT", 0),
+		"TCP ingress port for reliable frame delivery (0 = disabled)")
 	ifaceFlag := flag.String("iface", envStr("MULTICAST_IF", "eth0"),
 		"comma-separated NIC names for multicast egress (e.g. eth0,eth1)")
 	flag.IntVar(&c.EgressPort, "egress-port", envInt("EGRESS_PORT", 9001),
@@ -96,6 +109,12 @@ func Load() (*Config, error) {
 		"multicast scope: link | site | org | global")
 	flag.StringVar(&c.MCBaseAddr, "mc-base-addr", envStr("MC_BASE_ADDR", ""),
 		"base IPv6 address for assigned multicast address space (bytes 2-12)")
+	proxySeq := flag.Bool("proxy-seq", envBool("PROXY_SEQ", true),
+		"assign ShardSeqNum when sender leaves it 0 (disable for pure sender-assigned mode)")
+	staticSubtreeID := flag.String("static-subtree-id", envStr("STATIC_SUBTREE_ID", ""),
+		"hex-encoded 32-byte SubtreeID override applied to all forwarded frames (empty = passthrough)")
+	staticSubtreeHeight := flag.String("static-subtree-height", envStr("STATIC_SUBTREE_HEIGHT", ""),
+		`SubtreeHeight override applied to all frames; empty = passthrough; "0"–"255" = explicit value`)
 	flag.BoolVar(&c.Debug, "debug", envBool("DEBUG", false),
 		"enable per-packet debug logging and multicast loopback (single-host testing)")
 	flag.StringVar(&c.MetricsAddr, "metrics-addr", envStr("METRICS_ADDR", ":9100"),
@@ -120,6 +139,26 @@ func Load() (*Config, error) {
 	c.ShardBits = *bits
 	c.NumGroups = 1 << c.ShardBits
 	c.OTLPInterval = *otlpInterval
+	c.ProxySeqEnabled = *proxySeq
+
+	// Parse StaticSubtreeID.
+	if *staticSubtreeID != "" {
+		b, err := hex.DecodeString(*staticSubtreeID)
+		if err != nil || len(b) != 32 {
+			return nil, fmt.Errorf("static-subtree-id must be exactly 64 hex characters (32 bytes); got %q", *staticSubtreeID)
+		}
+		c.StaticSubtreeID = b
+	}
+
+	// Parse StaticSubtreeHeight.
+	if *staticSubtreeHeight != "" {
+		n, err := strconv.ParseUint(*staticSubtreeHeight, 10, 8)
+		if err != nil {
+			return nil, fmt.Errorf("static-subtree-height must be empty or a value in [0, 255]; got %q: %w", *staticSubtreeHeight, err)
+		}
+		v := uint8(n)
+		c.StaticSubtreeHeight = &v
+	}
 
 	// Resolve multicast scope.
 	prefix, ok := Scopes[c.MCScope]

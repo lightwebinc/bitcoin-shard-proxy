@@ -51,8 +51,11 @@ func TestLoadDefaults(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	if cfg.ListenPort != 9000 {
-		t.Errorf("ListenPort = %d, want 9000", cfg.ListenPort)
+	if cfg.UDPListenPort != 9000 {
+		t.Errorf("UDPListenPort = %d, want 9000", cfg.UDPListenPort)
+	}
+	if !cfg.ProxySeqEnabled {
+		t.Error("ProxySeqEnabled should default to true")
 	}
 	if cfg.EgressPort != 9001 {
 		t.Errorf("EgressPort = %d, want 9001", cfg.EgressPort)

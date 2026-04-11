@@ -2,25 +2,26 @@
 
 [![CI](https://github.com/jefflightweb/bitcoin-shard-proxy/actions/workflows/ci.yml/badge.svg)](https://github.com/jefflightweb/bitcoin-shard-proxy/actions/workflows/ci.yml)
 
-A high-throughput UDP proxy that receives Bitcoin SV (BSV Blockchain) transaction
-datagrams, derives an IPv6 multicast group address from the transaction ID,
-and retransmits each datagram to the derived group for delivery to a subset
-of subscribers.
+A high-throughput proxy that receives Bitcoin SV (BSV Blockchain) v2 transaction
+frames over UDP (or TCP for reliable delivery), derives an IPv6 multicast group
+address from the transaction ID, optionally stamps a proxy-assigned sequence
+number and static subtree fields, and retransmits to a subset of subscribers.
 
 Inspiration: [Multicast within Multicast: Anycast](https://singulargrit.substack.com/p/multicast-within-multicast-anycast), [Multicast as the Only Viable Architecture](https://singulargrit.substack.com/p/multicast-as-the-only-viable-architecture)
 
 ```text
-sender  ──UDP──►  bitcoin-shard-proxy  ──UDP multicast──►  FF05::<shard>  (iface 0)
-                  (one worker / CPU)   └─────────────────►  FF05::<shard>  (iface 1)
-                                                             (subset of subscribers)
+sender  ──UDP/TCP──►  bitcoin-shard-proxy  ──UDP multicast──►  FF05::<shard>  (iface 0)
+                      (forwarder pipeline) └─────────────────►  FF05::<shard>  (iface 1)
+                                                                 (subset of subscribers)
 ```
 
 ## Documentation
 
-- [Architecture](docs/architecture.md) — how it works, shard derivation, wire format, multi-CPU design, package structure
-- [Configuration](docs/configuration.md) — all flags, environment variables, shard bits table, multicast scope, subscriber join
+- [Protocol](docs/protocol.md) — v2 wire format, shard derivation, proxy transform rules, TCP ingress, error handling
+- [Architecture](docs/architecture.md) — system overview, multi-CPU design, sequencing, subtree cross-linking, package structure
+- [Configuration](docs/configuration.md) — all flags, environment variables, ingress modes, sequencing, subtree overrides
 - [Testing](docs/testing.md) — unit tests, e2e test, LXD perf test, manual loopback test, `send-test-frames` reference
-- [Design Notes](docs/design.md) — open questions and roadmap
+- [Design Notes](docs/design.md) — resolved questions, open questions, roadmap
 
 ## Requirements
 
@@ -43,11 +44,21 @@ make clean      # removes built binaries
 
 ```bash
 ./bitcoin-shard-proxy \
-  -iface       eth0 \
-  -shard-bits  16   \
-  -scope       site \
-  -listen-port 9000 \
-  -egress-port 9001
+  -iface            eth0 \
+  -shard-bits       16   \
+  -scope            site \
+  -udp-listen-port  9000 \
+  -egress-port      9001
+```
+
+With TCP ingress and proxy sequence stamping (defaults on):
+
+```bash
+./bitcoin-shard-proxy \
+  -iface            eth0 \
+  -udp-listen-port  9000 \
+  -tcp-listen-port  9100 \
+  -proxy-seq        true
 ```
 
 See [docs/configuration.md](docs/configuration.md) for all flags and environment variable equivalents.

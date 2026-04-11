@@ -3,23 +3,10 @@
 //
 // # Design
 //
-// Each Worker owns two UDP sockets:
-//
-//   - An ingress socket bound to the listen address using SO_REUSEPORT.
-//     The kernel load-balances incoming datagrams across all workers that
-//     share the same port, distributing receive load without any userspace
-//     coordination or channel passing.
-//
-//   - An egress socket bound to an ephemeral port, used exclusively for
-//     WriteTo calls targeting the derived multicast group address.
-//
-// The hot path — [Worker.process] — performs zero heap allocation in the
-// common case: it decodes the frame into a stack-allocated pointer to the
-// receive buffer, computes the group index with a two-instruction shift and
-// mask, constructs the destination address, and calls WriteTo with the
-// original raw datagram bytes. No re-serialisation occurs; the frame is
-// forwarded verbatim so subscribers receive the full BSV frame including
-// the original txid.
+// Each Worker owns a single ingress UDP socket bound via SO_REUSEPORT. The
+// kernel distributes incoming datagrams across worker sockets with no
+// userspace coordination on the receive path. Per-packet decode, sequence
+// stamping, and egress forwarding are delegated to [forwarder.Forwarder].
 //
 // # SO_REUSEPORT
 //
@@ -40,9 +27,9 @@ import (
 
 	"golang.org/x/sys/unix"
 
+	"github.com/jefflightweb/bitcoin-shard-proxy/forwarder"
 	"github.com/jefflightweb/bitcoin-shard-proxy/frame"
 	"github.com/jefflightweb/bitcoin-shard-proxy/metrics"
-	"github.com/jefflightweb/bitcoin-shard-proxy/shard"
 )
 
 const (
@@ -51,25 +38,17 @@ const (
 	// UDP should stay well below the path MTU to avoid IP fragmentation.
 	RecvBufSize = 65536
 
-	// socketBufBytes is the value requested for SO_RCVBUF and SO_SNDBUF.
+	// socketBufBytes is the value requested for SO_RCVBUF.
 	// Larger buffers absorb short-lived bursts without dropping datagrams.
 	socketBufBytes = 4 * 1024 * 1024 // 4 MiB
 )
 
-// egressTarget pairs a network interface with its pre-opened egress socket.
-type egressTarget struct {
-	iface *net.Interface
-	conn  *net.UDPConn
-}
-
-// Worker owns one ingress socket and one or more egress sockets and processes
-// datagrams on a single goroutine. Create with [New] and start with [Run].
+// Worker owns one SO_REUSEPORT ingress socket and delegates forwarding to a
+// shared [forwarder.Forwarder]. Create with [New] and start with [Run].
 type Worker struct {
 	id     int
-	engine *shard.Engine
+	fwd    *forwarder.Forwarder
 	ifaces []*net.Interface
-	port   int // egress UDP destination port for multicast groups
-	debug  bool
 	rec    *metrics.Recorder
 	log    *slog.Logger
 }
@@ -77,26 +56,22 @@ type Worker struct {
 // New constructs a Worker. No sockets are opened until [Run] is called.
 //
 //   - id is a small integer used in log fields to distinguish workers.
-//   - engine is the shared, immutable shard derivation engine.
-//   - ifaces is the list of NICs over which multicast datagrams are sent.
-//   - egressPort is the UDP destination port written into outgoing datagrams.
-//   - debug enables per-packet debug logging and multicast loopback.
+//   - fwd is the shared forwarder; handles decode, sequence, and egress.
+//   - ifaces is the list of NICs passed to [forwarder.Forwarder.OpenTargets].
 //   - rec is the shared metrics recorder; may be nil to disable metrics.
-func New(id int, engine *shard.Engine, ifaces []*net.Interface, egressPort int, debug bool, rec *metrics.Recorder) *Worker {
+func New(id int, fwd *forwarder.Forwarder, ifaces []*net.Interface, rec *metrics.Recorder) *Worker {
 	return &Worker{
 		id:     id,
-		engine: engine,
+		fwd:    fwd,
 		ifaces: ifaces,
-		port:   egressPort,
-		debug:  debug,
 		rec:    rec,
 		log:    slog.Default().With("worker", id),
 	}
 }
 
-// Run opens the ingress and egress sockets and enters the receive loop.
-// It blocks until done is closed or an unrecoverable socket error occurs.
-// Intended to be launched as a goroutine from main.
+// Run opens the ingress socket, opens egress targets via the forwarder, then
+// enters the receive loop. It blocks until done is closed or an unrecoverable
+// socket error occurs. Intended to be launched as a goroutine from main.
 //
 //   - listenAddr is the bind address string (e.g. "[::]"), without port.
 //   - listenPort is the UDP port shared by all workers via SO_REUSEPORT.
@@ -152,76 +127,27 @@ func (w *Worker) Run(listenAddr string, listenPort int, done <-chan struct{}) er
 		}
 	}()
 
-	// Open one egress socket per configured interface.
-	loopback := 0
-	if w.debug {
-		loopback = 1
+	// Open egress sockets via the forwarder. Worker 0 probes each interface.
+	targets, err := w.fwd.OpenTargets(w.ifaces, w.id == 0)
+	if err != nil {
+		return fmt.Errorf("worker %d: open targets: %w", w.id, err)
 	}
-	targets := make([]egressTarget, 0, len(w.ifaces))
-	for _, iface := range w.ifaces {
-		egressConn, err := net.ListenPacket("udp6", "[::]:0")
-		if err != nil {
-			return fmt.Errorf("worker %d: egress ListenPacket(%s): %w", w.id, iface.Name, err)
-		}
-		udpEgress := egressConn.(*net.UDPConn)
+	defer forwarder.CloseTargets(targets, w.log)
 
-		rawConn, err := udpEgress.SyscallConn()
-		if err != nil {
-			_ = udpEgress.Close()
-			return fmt.Errorf("worker %d: SyscallConn(%s): %w", w.id, iface.Name, err)
-		}
-		var setsockoptErr error
-		if err := rawConn.Control(func(fd uintptr) {
-			if err := unix.SetsockoptInt(int(fd), unix.IPPROTO_IPV6, unix.IPV6_MULTICAST_IF, iface.Index); err != nil {
-				setsockoptErr = fmt.Errorf("IPV6_MULTICAST_IF: %w", err)
-				return
-			}
-			if err := unix.SetsockoptInt(int(fd), unix.IPPROTO_IPV6, unix.IPV6_MULTICAST_LOOP, loopback); err != nil {
-				w.log.Warn("could not configure multicast loopback", "iface", iface.Name, "err", err)
-			}
-		}); err != nil {
-			_ = udpEgress.Close()
-			return fmt.Errorf("worker %d: rawConn.Control(%s): %w", w.id, iface.Name, err)
-		}
-		if setsockoptErr != nil {
-			_ = udpEgress.Close()
-			return fmt.Errorf("worker %d: SetMulticastInterface(%s): %w", w.id, iface.Name, setsockoptErr)
-		}
-
-		// Probe the socket on worker 0 only — all workers use the same
-		// interfaces, so one probe per interface at startup is sufficient.
-		if w.id == 0 {
-			if err := probeEgressSocket(w.log, udpEgress, iface); err != nil {
-				_ = udpEgress.Close()
-				return fmt.Errorf("worker %d: egress probe(%s): %w", w.id, iface.Name, err)
-			}
-		}
-
-		targets = append(targets, egressTarget{iface: iface, conn: udpEgress})
-	}
-	defer func() {
-		for _, tgt := range targets {
-			if err := tgt.conn.Close(); err != nil {
-				w.log.Warn("close egress conn", "iface", tgt.iface.Name, "err", err)
-			}
-		}
-	}()
-
-	buf := make([]byte, RecvBufSize)
 	ifaceNames := make([]string, len(targets))
 	for i, tgt := range targets {
-		ifaceNames[i] = tgt.iface.Name
+		ifaceNames[i] = tgt.Iface.Name
 	}
-	w.log.Info("ready",
-		"shard_bits", w.engine.ShardBits(),
-		"num_groups", w.engine.NumGroups(),
-		"listen_port", listenPort,
-		"egress_ifaces", ifaceNames,
-	)
+	w.log.Info("ready", "listen_port", listenPort, "egress_ifaces", ifaceNames)
 	if w.rec != nil {
 		w.rec.WorkerReady()
 		defer w.rec.WorkerDone()
 	}
+
+	// Allocate per-worker buffers. encodeBuf is used by the forwarder when
+	// re-encoding is required (proxy-assigned seq or static overrides).
+	buf := make([]byte, RecvBufSize)
+	encodeBuf := make([]byte, frame.HeaderSize+frame.MaxPayload)
 
 	for {
 		n, src, err := conn.ReadFrom(buf)
@@ -230,8 +156,8 @@ func (w *Worker) Run(listenAddr string, listenPort int, done <-chan struct{}) er
 				return nil
 			}
 			w.log.Warn("ReadFrom error", "err", err)
-			if w.rec != nil {
-				w.rec.IngressError(targets[0].iface.Name, w.id)
+			if w.rec != nil && len(targets) > 0 {
+				w.rec.IngressError(targets[0].Iface.Name, w.id)
 			}
 			continue
 		}
@@ -239,89 +165,17 @@ func (w *Worker) Run(listenAddr string, listenPort int, done <-chan struct{}) er
 		if n == RecvBufSize {
 			w.log.Warn("datagram fills recv buffer; may be truncated",
 				"src", src, "len", n)
-			if w.rec != nil {
-				w.rec.PacketDropped(targets[0].iface.Name, w.id, "truncated")
+			if w.rec != nil && len(targets) > 0 {
+				w.rec.PacketDropped(targets[0].Iface.Name, w.id, "truncated")
 			}
 			continue
 		}
 
-		if w.rec != nil {
-			w.rec.PacketReceived(targets[0].iface.Name, w.id, n)
+		if w.rec != nil && len(targets) > 0 {
+			w.rec.PacketReceived(targets[0].Iface.Name, w.id, n)
 		}
-		w.process(targets, buf[:n], src)
+		w.fwd.Process(targets, encodeBuf, buf[:n], src, w.id)
 	}
-}
-
-// process is the hot path executed for every received datagram.
-//
-// It decodes the BSV frame header, derives the destination multicast group
-// address from the txid prefix, and retransmits the original raw datagram
-// bytes verbatim to that address on every configured egress interface.
-// No re-serialisation occurs.
-func (w *Worker) process(targets []egressTarget, raw []byte, src net.Addr) {
-	f, err := frame.Decode(raw)
-	if err != nil {
-		w.log.Debug("frame decode error", "err", err, "len", len(raw))
-		if w.rec != nil {
-			w.rec.PacketDropped(targets[0].iface.Name, w.id, "decode_error")
-		}
-		return
-	}
-
-	groupIdx := w.engine.GroupIndex(&f.TxID)
-	dst := w.engine.Addr(groupIdx, w.port)
-
-	for _, tgt := range targets {
-		dst.Zone = tgt.iface.Name
-		if _, err := tgt.conn.WriteTo(raw, dst); err != nil {
-			w.log.Warn("WriteTo error", "iface", tgt.iface.Name, "dst", dst, "err", err)
-			if w.rec != nil {
-				w.rec.PacketDropped(tgt.iface.Name, w.id, "write_error")
-				w.rec.EgressError(tgt.iface.Name, w.id)
-			}
-			continue
-		}
-		if w.rec != nil {
-			w.rec.PacketForwarded(tgt.iface.Name, w.id, groupIdx, len(raw))
-		}
-	}
-
-	if w.debug {
-		w.log.Debug("forwarded",
-			"txid_prefix", fmt.Sprintf("%08X", groupIdx),
-			"group_idx", groupIdx,
-			"src", src,
-			"dst", dst,
-		)
-	}
-}
-
-// probeEgressSocket sends a zero-byte datagram to the link-local all-nodes
-// multicast address (ff02::1) on the given interface. This exercises the
-// actual WriteTo path with IPV6_MULTICAST_IF applied and catches interface
-// misconfigurations — missing routes, policy drops, unsupported tunnel types —
-// at startup rather than silently under load.
-//
-// Hard errors (EPERM, EADDRNOTAVAIL) cause a non-nil return so the caller
-// can fail fast. ENETUNREACH is treated as a warning — the route may not
-// exist yet (e.g. added after startup) but the socket is otherwise valid.
-// Any other error is also treated as a soft warning.
-func probeEgressSocket(log *slog.Logger, conn *net.UDPConn, iface *net.Interface) error {
-	dst := &net.UDPAddr{
-		IP:   net.ParseIP("ff02::1"),
-		Port: 9, // discard port — no listener required
-	}
-	_, err := conn.WriteTo([]byte{}, dst)
-	if err == nil {
-		return nil
-	}
-	if isErrno(err, syscall.EPERM) ||
-		isErrno(err, syscall.EADDRNOTAVAIL) {
-		return fmt.Errorf("interface not usable for multicast egress: %w", err)
-	}
-	// Soft: ENETUNREACH (missing route) and other errors are warnings only.
-	log.Warn("egress probe warning", "iface", iface.Name, "err", err)
-	return nil
 }
 
 // isClosedErr returns true for errors that indicate the socket was closed
