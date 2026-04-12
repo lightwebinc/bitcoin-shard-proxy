@@ -243,13 +243,30 @@ func TestHandleConnBadMagic(t *testing.T) {
 	})
 }
 
+func buildV1TCPFrame(t *testing.T, txidByte byte, payload []byte) []byte {
+	t.Helper()
+	buf := make([]byte, frame.HeaderSizeV1+len(payload))
+	// Magic
+	buf[0], buf[1], buf[2], buf[3] = 0xE3, 0xE1, 0xF3, 0xE8
+	// ProtoVer
+	buf[4], buf[5] = 0x02, 0xBF
+	// FrameVer v1
+	buf[6] = frame.FrameVerV1
+	// TxID[0]
+	buf[8] = txidByte
+	// PayLen at @40
+	buf[40] = byte(len(payload) >> 24)
+	buf[41] = byte(len(payload) >> 16)
+	buf[42] = byte(len(payload) >> 8)
+	buf[43] = byte(len(payload))
+	copy(buf[44:], payload)
+	return buf
+}
+
 func TestHandleConnV1Frame(t *testing.T) {
-	hdr := make([]byte, frame.HeaderSize)
-	hdr[0], hdr[1], hdr[2], hdr[3] = 0xE3, 0xE1, 0xF3, 0xE8
-	hdr[4], hdr[5] = 0x02, 0xBF
-	hdr[6] = 0x01 // v1 — should be rejected
+	raw := buildV1TCPFrame(t, 0xAB, []byte("v1-payload"))
 	dialHandleConn(t, func(conn net.Conn) {
-		_, _ = conn.Write(hdr)
+		_, _ = conn.Write(raw)
 	})
 }
 

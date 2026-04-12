@@ -1,6 +1,7 @@
 package forwarder
 
 import (
+	"encoding/binary"
 	"fmt"
 	"log/slog"
 	"net"
@@ -59,6 +60,18 @@ func buildV2Frame(t *testing.T, txidByte0 byte, shardSeqNum uint64, subtreeHeigh
 		t.Fatalf("Encode: %v", err)
 	}
 	return buf[:n]
+}
+
+func buildV1Frame(t *testing.T, txidByte0 byte, payload []byte) []byte {
+	t.Helper()
+	buf := make([]byte, frame.HeaderSizeV1+len(payload))
+	binary.BigEndian.PutUint32(buf[0:4], frame.MagicBSV)
+	binary.BigEndian.PutUint16(buf[4:6], frame.ProtoVer)
+	buf[6] = frame.FrameVerV1
+	buf[8] = txidByte0
+	binary.BigEndian.PutUint32(buf[40:44], uint32(len(payload)))
+	copy(buf[44:], payload)
+	return buf
 }
 
 func makeForwarder(proxySeqEnabled bool, staticID []byte, staticHeight *uint8) *Forwarder {
@@ -226,6 +239,48 @@ func TestProcessMultipleTargets(t *testing.T) {
 	fw := makeForwarder(true, nil, nil)
 	raw := buildV2Frame(t, 0xAB, 1, 0, nil)
 	fw.Process(makeTargets(t, conn1, conn2), encodeBuf(), raw, fakeAddr{}, 0)
+}
+
+// ── v1 ingress \u2192 v2 egress ──────────────────────────────────────────────────────
+
+func TestProcessV1FrameReencode(t *testing.T) {
+	// v1 frames have a 44-byte header; they must always be re-encoded to v2.
+	// Use empty payload so the re-encoded v2 frame fits in exactly HeaderSize bytes.
+	raw := buildV1Frame(t, 0xAB, nil)
+	fw := makeForwarder(false, nil, nil) // proxy-seq off: ShardSeqNum stays 0
+	conn, _ := openLoopbackUDP(t)
+	buf := encodeBuf()
+	fw.Process(makeTargets(t, conn), buf, raw, fakeAddr{}, 0)
+
+	// buf should now contain a v2-encoded frame (the WriteTo to multicast
+	// fails on loopback, but Encode was called into buf before WriteTo).
+	got, err := frame.Decode(buf[:frame.HeaderSize])
+	if err != nil {
+		t.Fatalf("re-decode: %v", err)
+	}
+	if got.Version != frame.FrameVerV2 {
+		t.Errorf("egress Version = 0x%02X, want 0x%02X (v2)", got.Version, frame.FrameVerV2)
+	}
+	if got.TxID[0] != 0xAB {
+		t.Errorf("TxID[0] = 0x%02X, want 0xAB", got.TxID[0])
+	}
+}
+
+func TestProcessV1FrameWithProxySeq(t *testing.T) {
+	// v1 frame + proxy-seq enabled: ShardSeqNum should be stamped.
+	raw := buildV1Frame(t, 0xAB, nil)
+	fw := makeForwarder(true, nil, nil) // proxy-seq on
+	conn, _ := openLoopbackUDP(t)
+	buf := encodeBuf()
+	fw.Process(makeTargets(t, conn), buf, raw, fakeAddr{}, 0)
+
+	got, err := frame.Decode(buf[:frame.HeaderSize])
+	if err != nil {
+		t.Fatalf("re-decode: %v", err)
+	}
+	if got.ShardSeqNum != 0 {
+		t.Errorf("first v1 frame seq = %d, want 0 (first counter value)", got.ShardSeqNum)
+	}
 }
 
 func TestProcessDebugMode(t *testing.T) {

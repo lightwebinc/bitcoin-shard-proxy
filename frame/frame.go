@@ -1,9 +1,21 @@
-// Package frame defines the BSV-over-UDP wire format (v2) used by
+// Package frame defines the BSV-over-UDP v1 and v2 wire formats used by
 // bitcoin-shard-proxy.
 //
-// # Wire format — v2 (84 bytes, zero padding, all multi-byte fields 8-byte aligned)
+// # Wire format — v1 (44 bytes, legacy)
 //
 // All multi-byte integers are big-endian.
+//
+//	Offset  Size  Field            Value / notes
+//	------  ----  -----            -------------
+//	     0     4  Network magic    0xE3E1F3E8
+//	     4     2  Protocol ver     0x02BF
+//	     6     1  Frame version    0x01
+//	     7     1  Reserved         0x00
+//	     8    32  Transaction ID   raw 256-bit txid
+//	    40     4  Payload length   uint32; max [MaxPayload] bytes
+//	    44     *  BSV tx payload
+//
+// # Wire format — v2 (84 bytes, zero padding, all multi-byte fields 8-byte aligned)
 //
 //	Offset  Size  Align  Field            Value / notes
 //	------  ----  -----  -----            -------------
@@ -21,11 +33,12 @@
 // protocol and raw transaction data), not the reversed display order shown
 // by block explorers.
 //
-// # v1 compatibility
+// # v1 handling
 //
-// v1 frames (FrameVer = 0x01, 44-byte header) are rejected by [Decode] with
-// [ErrBadVer]. All senders must use v2. The v1 constant [FrameVerV1] is
-// exported only to produce informative error messages.
+// [Decode] accepts both v1 and v2 frames. v1 frames are decoded into a [Frame]
+// with [Version] = [FrameVerV1] and zero-valued [ShardSeqNum], [SubtreeID], and
+// [SubtreeHeight]. Callers (forwarder) always re-encode v1 frames as v2 on
+// egress. Unknown versions return [ErrBadVer].
 //
 // # BSV transaction format compatibility
 //
@@ -52,12 +65,15 @@ const (
 	// version baseline that introduced the large-block policy.
 	ProtoVer uint16 = 0x02BF
 
-	// FrameVerV1 is the legacy v1 frame version. Frames with this version
-	// are rejected; the constant is exported for diagnostic messages only.
+	// FrameVerV1 is the legacy v1 frame version (44-byte header). [Decode]
+	// accepts v1 frames and returns them with zero-valued v2-only fields.
 	FrameVerV1 byte = 0x01
 
 	// FrameVerV2 is the current frame version.
 	FrameVerV2 byte = 0x02
+
+	// HeaderSizeV1 is the fixed size of the v1 frame header in bytes.
+	HeaderSizeV1 = 44
 
 	// HeaderSize is the fixed size of the v2 frame header in bytes.
 	// Kept as HeaderSize (not HeaderSizeV2) so callers need no rename.
@@ -74,26 +90,28 @@ var (
 	// ErrBadMagic is returned when the first four bytes do not match MagicBSV.
 	ErrBadMagic = errors.New("frame: invalid BSV magic bytes")
 
-	// ErrBadVer is returned when the frame version byte is not FrameVerV2.
-	// This includes v1 frames (0x01), which are no longer accepted.
+	// ErrBadVer is returned when the frame version byte is neither FrameVerV1
+	// nor FrameVerV2.
 	ErrBadVer = errors.New("frame: unsupported frame version")
 
 	// ErrTooLarge is returned when the payload length field exceeds MaxPayload.
 	ErrTooLarge = errors.New("frame: payload length exceeds MaxPayload")
 
-	// ErrTooShort is returned when the datagram is shorter than HeaderSize.
+	// ErrTooShort is returned when the datagram is shorter than the minimum
+	// header size ([HeaderSizeV1] for v1, [HeaderSize] for v2).
 	ErrTooShort = errors.New("frame: datagram shorter than header")
 )
 
-// Frame is the parsed in-memory representation of a v2 BSV datagram.
+// Frame is the parsed in-memory representation of a v1 or v2 BSV datagram.
 //
 // Payload is a zero-copy slice pointing into the buffer passed to [Decode];
 // the buffer must remain valid for the lifetime of the Frame.
 type Frame struct {
+	Version       byte     // FrameVerV1 or FrameVerV2 — set by Decode
 	TxID          [32]byte // Raw 256-bit transaction ID (internal byte order)
-	ShardSeqNum   uint64   // Monotonic sequence number; 0 = unset
-	SubtreeID     [32]byte // 32-byte batch identifier assigned by tx processor; zeros = unset
-	SubtreeHeight uint8    // log₂(subtree capacity); 0 = unset
+	ShardSeqNum   uint64   // Monotonic sequence number; 0 = unset (always 0 for v1)
+	SubtreeID     [32]byte // 32-byte batch identifier; zeros = unset (always zero for v1)
+	SubtreeHeight uint8    // log₂(subtree capacity); 0 = unset (always 0 for v1)
 	Payload       []byte   // Raw serialised BSV transaction
 }
 
@@ -123,18 +141,22 @@ func Encode(f *Frame, buf []byte) (int, error) {
 	return total, nil
 }
 
-// Decode parses a raw v2 datagram into a Frame.
+// Decode parses a raw v1 or v2 datagram into a Frame.
 //
 // The returned Frame.Payload is a zero-copy slice into buf. The caller must
 // not modify or reuse buf while the Frame is in scope.
 //
-// v1 frames (FrameVer 0x01) are rejected with [ErrBadVer].
+// v1 frames (FrameVer 0x01) are decoded with [Version] = [FrameVerV1] and
+// zero-valued [ShardSeqNum], [SubtreeID], and [SubtreeHeight]. The forwarder
+// always re-encodes v1 frames as v2 on egress.
+//
+// Unknown versions return [ErrBadVer].
 //
 // Possible errors: [ErrTooShort], [ErrBadMagic], [ErrBadVer], [ErrTooLarge],
 // or [io.ErrUnexpectedEOF] if the datagram is truncated relative to the
 // declared payload length.
 func Decode(buf []byte) (*Frame, error) {
-	if len(buf) < HeaderSize {
+	if len(buf) < HeaderSizeV1 {
 		return nil, ErrTooShort
 	}
 
@@ -142,20 +164,48 @@ func Decode(buf []byte) (*Frame, error) {
 		return nil, fmt.Errorf("%w: got 0x%08X", ErrBadMagic, magic)
 	}
 
-	if fver := buf[6]; fver != FrameVerV2 {
+	fver := buf[6]
+	switch fver {
+	case FrameVerV1:
+		return decodeV1(buf)
+	case FrameVerV2:
+		return decodeV2(buf)
+	default:
 		return nil, fmt.Errorf("%w: got 0x%02X", ErrBadVer, fver)
 	}
+}
 
+// decodeV1 parses the 44-byte v1 header. New v2 fields default to zero.
+func decodeV1(buf []byte) (*Frame, error) {
+	if len(buf) < HeaderSizeV1 {
+		return nil, ErrTooShort
+	}
+	payLen := int(binary.BigEndian.Uint32(buf[40:44]))
+	if payLen > MaxPayload {
+		return nil, ErrTooLarge
+	}
+	if len(buf)-HeaderSizeV1 < payLen {
+		return nil, io.ErrUnexpectedEOF
+	}
+	f := &Frame{Version: FrameVerV1}
+	copy(f.TxID[:], buf[8:40])
+	f.Payload = buf[HeaderSizeV1 : HeaderSizeV1+payLen]
+	return f, nil
+}
+
+// decodeV2 parses the 84-byte v2 header.
+func decodeV2(buf []byte) (*Frame, error) {
+	if len(buf) < HeaderSize {
+		return nil, ErrTooShort
+	}
 	payLen := int(binary.BigEndian.Uint32(buf[80:84]))
 	if payLen > MaxPayload {
 		return nil, ErrTooLarge
 	}
-
 	if len(buf)-HeaderSize < payLen {
 		return nil, io.ErrUnexpectedEOF
 	}
-
-	f := &Frame{}
+	f := &Frame{Version: FrameVerV2}
 	f.SubtreeHeight = buf[7]
 	copy(f.TxID[:], buf[8:40])
 	f.ShardSeqNum = binary.BigEndian.Uint64(buf[40:48])

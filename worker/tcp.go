@@ -3,18 +3,18 @@
 //
 // # Protocol
 //
-// Each TCP connection carries a stream of v2 frames with no framing envelope:
+// Each TCP connection carries a stream of v1 or v2 frames with no framing
+// envelope. The proxy reads the minimum header first (44 bytes for v1,
+// extended to 84 for v2), then reads the declared payload:
 //
-//  1. Client writes the 84-byte v2 header.
-//  2. Client writes PayLen bytes of payload (PayLen read from header @80–83).
-//  3. Repeat for each subsequent frame.
+//  1. Read [frame.HeaderSizeV1] (44) bytes — enough to see the version byte
+//     and, for v1, the PayLen field.
+//  2. If FrameVer == v2: read 40 more bytes to complete the 84-byte header.
+//  3. Read PayLen bytes of payload.
+//  4. Forward assembled frame to [forwarder.Forwarder.Process].
 //
-// The proxy reads exactly two buffers per frame (header then payload) using
-// [io.ReadFull]. A [bufio.Reader] (64 KiB) absorbs kernel round-trips under
-// burst load.
-//
-// v1 frames are rejected (ErrBadVer from frame.Decode) and the connection is
-// closed.
+// A [bufio.Reader] (64 KiB) absorbs kernel round-trips under burst load.
+// v1 frames are re-encoded to v2 on egress by the forwarder.
 package worker
 
 import (
@@ -31,8 +31,8 @@ import (
 
 const tcpBufSize = 64 * 1024 // 64 KiB read buffer per TCP connection
 
-// TCPIngress listens for TCP connections carrying a stream of v2 frames and
-// forwards each frame via the shared [forwarder.Forwarder].
+// TCPIngress listens for TCP connections carrying a stream of v1 or v2 frames
+// and forwards each frame via the shared [forwarder.Forwarder].
 type TCPIngress struct {
 	fwd    *forwarder.Forwarder
 	ifaces []*net.Interface
@@ -89,7 +89,7 @@ func (ti *TCPIngress) Run(listenAddr string, listenPort int, done <-chan struct{
 	}
 }
 
-// handleConn reads a stream of v2 frames from conn and forwards each one.
+// handleConn reads a stream of v1 or v2 frames from conn and forwards each.
 // The connection is closed on any read error or protocol violation.
 // Each goroutine owns its own encode and assembly buffers.
 func (ti *TCPIngress) handleConn(conn net.Conn, targets []forwarder.Target) {
@@ -98,49 +98,61 @@ func (ti *TCPIngress) handleConn(conn net.Conn, targets []forwarder.Target) {
 	ti.log.Debug("TCP connection accepted", "remote", remote)
 
 	br := bufio.NewReaderSize(conn, tcpBufSize)
-	hdr := make([]byte, frame.HeaderSize)
 	connEncodeBuf := make([]byte, frame.HeaderSize+frame.MaxPayload)
 	encodeBuf := make([]byte, frame.HeaderSize+frame.MaxPayload)
 
 	for {
-		// Read the fixed-size v2 header.
-		if _, err := io.ReadFull(br, hdr); err != nil {
+		// Step 1: read the v1 minimum header (44 bytes). This covers both
+		// v1 (complete header) and the leading 44 bytes of a v2 header.
+		if _, err := io.ReadFull(br, connEncodeBuf[:frame.HeaderSizeV1]); err != nil {
 			if err != io.EOF && !isClosedErr(err) {
 				ti.log.Debug("TCP read header error", "remote", remote, "err", err)
 			}
 			return
 		}
 
-		// Validate magic and frame version before reading the payload.
-		// A full Decode is performed after reassembly; this early check avoids
-		// reading an arbitrary PayLen from an invalid/misrouted connection.
-		if hdr[0] != 0xE3 || hdr[1] != 0xE1 || hdr[2] != 0xF3 || hdr[3] != 0xE8 {
+		// Validate magic before reading further.
+		if connEncodeBuf[0] != 0xE3 || connEncodeBuf[1] != 0xE1 ||
+			connEncodeBuf[2] != 0xF3 || connEncodeBuf[3] != 0xE8 {
 			ti.log.Warn("TCP bad magic; closing connection", "remote", remote)
 			return
 		}
-		if hdr[6] != frame.FrameVerV2 {
+
+		var hdrSize, payLen int
+		switch connEncodeBuf[6] {
+		case frame.FrameVerV1:
+			hdrSize = frame.HeaderSizeV1
+			payLen = int(uint32(connEncodeBuf[40])<<24 | uint32(connEncodeBuf[41])<<16 |
+				uint32(connEncodeBuf[42])<<8 | uint32(connEncodeBuf[43]))
+		case frame.FrameVerV2:
+			// Step 2: read the remaining 40 bytes to complete the v2 header.
+			if _, err := io.ReadFull(br, connEncodeBuf[frame.HeaderSizeV1:frame.HeaderSize]); err != nil {
+				ti.log.Debug("TCP read v2 header extension error", "remote", remote, "err", err)
+				return
+			}
+			hdrSize = frame.HeaderSize
+			payLen = int(uint32(connEncodeBuf[80])<<24 | uint32(connEncodeBuf[81])<<16 |
+				uint32(connEncodeBuf[82])<<8 | uint32(connEncodeBuf[83]))
+		default:
 			ti.log.Warn("TCP unsupported frame version; closing connection",
-				"remote", remote, "ver", hdr[6])
+				"remote", remote, "ver", connEncodeBuf[6])
 			return
 		}
 
-		// PayLen is at bytes 80–83.
-		payLen := int(uint32(hdr[80])<<24 | uint32(hdr[81])<<16 | uint32(hdr[82])<<8 | uint32(hdr[83]))
 		if payLen > frame.MaxPayload {
 			ti.log.Warn("TCP PayLen exceeds MaxPayload; closing connection",
 				"remote", remote, "pay_len", payLen)
 			return
 		}
 
-		// Assemble full frame into connEncodeBuf (header + payload contiguous).
-		copy(connEncodeBuf, hdr)
+		// Step 3: read payload bytes.
 		if payLen > 0 {
-			if _, err := io.ReadFull(br, connEncodeBuf[frame.HeaderSize:frame.HeaderSize+payLen]); err != nil {
+			if _, err := io.ReadFull(br, connEncodeBuf[hdrSize:hdrSize+payLen]); err != nil {
 				ti.log.Debug("TCP read payload error", "remote", remote, "err", err)
 				return
 			}
 		}
 
-		ti.fwd.Process(targets, encodeBuf, connEncodeBuf[:frame.HeaderSize+payLen], remote, -1)
+		ti.fwd.Process(targets, encodeBuf, connEncodeBuf[:hdrSize+payLen], remote, -1)
 	}
 }

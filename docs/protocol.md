@@ -43,8 +43,8 @@ Frames that do not start with this value are rejected.
 baseline that introduced the large-block policy. This field is informational;
 the proxy does not validate it.
 
-**Frame version (6)** — `0x02`. Frames with any other value are rejected with
-an error. v1 frames (`0x01`, 44-byte header) are not accepted.
+**Frame version (6)** — `0x02` for v2, `0x01` for v1 (see §3). Any other
+value is rejected. v1 frames are accepted and re-encoded as v2 on egress.
 
 **Subtree height (7)** — `uint8`. The base-2 logarithm of the subtree capacity
 (e.g. `20` means the subtree holds up to 2²⁰ = 1,048,576 transactions). `0`
@@ -73,23 +73,29 @@ message envelope wraps it.
 
 ---
 
-## 3. v1 Frame Format (deprecated, rejected)
+## 3. v1 Frame Format (legacy, accepted)
 
 v1 frames use a 44-byte header and carry no sequence number or subtree fields.
-The proxy rejects them at decode time and closes the UDP datagram or TCP
-connection. Senders must migrate to v2.
+The proxy accepts them; on egress they are **re-encoded as v2** with
+`ShardSeqNum`, `SubtreeID`, and `SubtreeHeight` set to zero. If `-proxy-seq`
+is enabled (default), `ShardSeqNum` is stamped by the proxy before forwarding.
+All static subtree overrides also apply.
 
 ```
 Offset  Size  Field
 ------  ----  -----
      0     4  Network magic    0xE3E1F3E8
      4     2  Protocol ver     0x02BF
-     6     1  Frame version    0x01  ← REJECTED by this proxy
+     6     1  Frame version    0x01
      7     1  Reserved         0x00
      8    32  Transaction ID
     40     4  Payload length
     44     *  Payload
 ```
+
+**TCP ingress:** the TCP reader reads 44 bytes first to detect the version, then
+completes the header read if v2 (40 more bytes). No separate port is needed for
+v1 and v2 — both versions share the same listener.
 
 ---
 

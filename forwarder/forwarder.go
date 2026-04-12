@@ -145,8 +145,9 @@ func (fw *Forwarder) Process(targets []Target, encodeBuf []byte, raw []byte, src
 	groupIdx := fw.engine.GroupIndex(&f.TxID)
 	dst := fw.engine.Addr(groupIdx, fw.egressPort)
 
-	// Apply static overrides; track whether re-encoding is required.
-	needReencode := false
+	// v1 frames must be re-encoded as v2 on egress (different header size).
+	// Static overrides and proxy-seq also force re-encode below.
+	needReencode := f.Version != frame.FrameVerV2
 	if fw.staticSubtreeID != nil {
 		copy(f.SubtreeID[:], fw.staticSubtreeID)
 		needReencode = true
