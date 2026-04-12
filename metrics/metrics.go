@@ -47,6 +47,7 @@ import (
 	"go.opentelemetry.io/otel/sdk/resource"
 
 	promclient "github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/collectors"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
@@ -137,8 +138,8 @@ func New(instanceID string, numWorkers int, otlpEndpoint string, otlpInterval ti
 
 	// Separate registry for Go runtime and process metrics.
 	runtimeReg := promclient.NewRegistry()
-	runtimeReg.MustRegister(promclient.NewGoCollector())
-	runtimeReg.MustRegister(promclient.NewProcessCollector(promclient.ProcessCollectorOpts{}))
+	runtimeReg.MustRegister(collectors.NewGoCollector())
+	runtimeReg.MustRegister(collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}))
 	if err != nil {
 		return nil, fmt.Errorf("metrics: prometheus exporter: %w", err)
 	}
@@ -421,7 +422,7 @@ func (r *Recorder) Serve(addr string, done <-chan struct{}) {
 func (r *Recorder) handleHealthz(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
-	fmt.Fprintf(w, `{"status":"ok","uptime_seconds":%.1f}`, time.Since(r.startTime).Seconds())
+	_, _ = fmt.Fprintf(w, `{"status":"ok","uptime_seconds":%.1f}`, time.Since(r.startTime).Seconds())
 }
 
 func (r *Recorder) handleReadyz(w http.ResponseWriter, _ *http.Request) {
@@ -430,9 +431,9 @@ func (r *Recorder) handleReadyz(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	if ready >= total && total > 0 {
 		w.WriteHeader(http.StatusOK)
-		fmt.Fprintf(w, `{"status":"ready","workers_ready":%d,"workers_total":%d}`, ready, total)
+		_, _ = fmt.Fprintf(w, `{"status":"ready","workers_ready":%d,"workers_total":%d}`, ready, total)
 		return
 	}
 	w.WriteHeader(http.StatusServiceUnavailable)
-	fmt.Fprintf(w, `{"status":"starting","workers_ready":%d,"workers_total":%d}`, ready, total)
+	_, _ = fmt.Fprintf(w, `{"status":"starting","workers_ready":%d,"workers_total":%d}`, ready, total)
 }

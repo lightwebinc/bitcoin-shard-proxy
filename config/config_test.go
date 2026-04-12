@@ -207,7 +207,7 @@ func TestLoadInstanceIDDefaultsToHostname(t *testing.T) {
 // ── env helper tests ──────────────────────────────────────────────────────────
 
 func TestEnvStrFallback(t *testing.T) {
-	os.Unsetenv("TEST_ENV_STR_KEY")
+	_ = os.Unsetenv("TEST_ENV_STR_KEY")
 	if got := envStr("TEST_ENV_STR_KEY", "default"); got != "default" {
 		t.Errorf("got %q, want %q", got, "default")
 	}
@@ -221,7 +221,7 @@ func TestEnvStrSet(t *testing.T) {
 }
 
 func TestEnvIntFallback(t *testing.T) {
-	os.Unsetenv("TEST_ENV_INT_KEY")
+	_ = os.Unsetenv("TEST_ENV_INT_KEY")
 	if got := envInt("TEST_ENV_INT_KEY", 42); got != 42 {
 		t.Errorf("got %d, want 42", got)
 	}
@@ -242,7 +242,7 @@ func TestEnvIntInvalid(t *testing.T) {
 }
 
 func TestEnvDurationFallback(t *testing.T) {
-	os.Unsetenv("TEST_ENV_DUR_KEY")
+	_ = os.Unsetenv("TEST_ENV_DUR_KEY")
 	if got := envDuration("TEST_ENV_DUR_KEY", 30*time.Second); got != 30*time.Second {
 		t.Errorf("got %v, want 30s", got)
 	}

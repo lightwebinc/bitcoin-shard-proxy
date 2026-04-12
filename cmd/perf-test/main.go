@@ -97,7 +97,7 @@ func scrapeMetrics(baseURL string) (*metricsSnapshot, error) {
 	if err != nil {
 		return nil, fmt.Errorf("scrape %s/metrics: %w", baseURL, err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return nil, fmt.Errorf("read metrics body: %w", err)
@@ -424,7 +424,7 @@ func sendFrames(ctx context.Context, cfg *config) *sendResult {
 	if err != nil {
 		log.Fatalf("dial %s: %v", cfg.ProxyAddr, err)
 	}
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 
 	payloadRange := cfg.PayloadMax - cfg.PayloadMin + 1
 	maxFrameSize := frame.HeaderSize + cfg.PayloadMax
@@ -535,7 +535,7 @@ func checkHealth(baseURL string) error {
 			return fmt.Errorf("GET %s%s: %w", baseURL, ep, err)
 		}
 		body, _ := io.ReadAll(resp.Body)
-		resp.Body.Close()
+		_ = resp.Body.Close()
 		if resp.StatusCode != http.StatusOK {
 			return fmt.Errorf("%s returned %d: %s", ep, resp.StatusCode, body)
 		}
@@ -559,17 +559,6 @@ func groupsForReceiver(vm string) []string {
 		return g
 	}
 	return nil
-}
-
-// allGroups returns the full list of multicast group addresses for the
-// configured shard space, e.g. ff05::0 through ff05::ff for shard_bits=8.
-func allGroups(shardBits uint) []string {
-	numGroups := uint32(1) << shardBits
-	groups := make([]string, numGroups)
-	for i := uint32(0); i < numGroups; i++ {
-		groups[i] = fmt.Sprintf("ff05::%x", i)
-	}
-	return groups
 }
 
 // ---------------------------------------------------------------------------

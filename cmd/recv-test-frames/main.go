@@ -84,7 +84,7 @@ func main() {
 			select {
 			case <-timer.C:
 				log.Printf("timeout after %s: only received %d/%d frames", *timeout, received.Load(), *count)
-				unix.Close(fd)
+				_ = unix.Close(fd)
 				os.Exit(1)
 			case <-done:
 			}
@@ -92,7 +92,7 @@ func main() {
 	}
 
 	<-done
-	unix.Close(fd)
+	_ = unix.Close(fd)
 }
 
 func recvLoop(fd int, limit int, received *atomic.Int64, done chan struct{}) {

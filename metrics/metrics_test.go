@@ -232,7 +232,7 @@ func TestServeMetricsEndpoint(t *testing.T) {
 			t.Errorf("GET %s: %v", path, err)
 			continue
 		}
-		resp.Body.Close()
+		_ = resp.Body.Close()
 		if resp.StatusCode < 200 || resp.StatusCode >= 600 {
 			t.Errorf("GET %s: unexpected status %d", path, resp.StatusCode)
 		}
