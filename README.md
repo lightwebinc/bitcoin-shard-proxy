@@ -26,10 +26,10 @@ sender  ──UDP/TCP──►  bitcoin-shard-proxy  ──UDP multicast──�
 ## Requirements
 
 - Go 1.25 or later
-- Linux kernel 3.9+, FreeBSD 12.3+ (for `SO_REUSEPORT`)
+- Linux kernel 3.9+, FreeBSD 12.3+ (for `SO_REUSEPORT`), MacOS
 - IPv6 enabled on the egress interface(s)
 - Multicast routing / MLD snooping configured for your subscriber fabric
-- Bitcoin SV ingress transaction packets in BRC-12 format
+- Bitcoin SV ingress transaction packets in BRC-12 format (V1), or extended sequence subtree format (V2).
 
 ## Build
 
