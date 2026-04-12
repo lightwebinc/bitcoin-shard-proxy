@@ -18,7 +18,7 @@ Offset  Size  Align  Field            Value / notes
      0     4   —     Network magic    0xE3E1F3E8  (BSV mainnet P2P magic)
      4     2   —     Protocol ver     0x02BF = 703
      6     1   —     Frame version    0x02
-     7     1   1 B   Subtree height   uint8; log₂(subtree capacity); 0 = unset
+     7     1   —     Reserved         0x00
      8    32   8 B   Transaction ID   raw 256-bit txid (internal byte order)
     40     8   8 B   Shard seq num    uint64 BE; sender-assigned; 0 = unset
     48    32   8 B   Subtree ID       32-byte batch identifier; all-zeros = unset
@@ -46,9 +46,8 @@ the proxy does not validate it.
 **Frame version (6)** — `0x02` for v2, `0x01` for v1 (see §3). Any other
 value is rejected. Both v1 and v2 frames are forwarded verbatim.
 
-**Subtree height (7)** — `uint8`. The base-2 logarithm of the subtree capacity
-(e.g. `20` means the subtree holds up to 2²⁰ = 1,048,576 transactions). `0`
-means the field is unset. Maximum expressible height: 255 (2²⁵⁵ capacity).
+**Reserved (7)** — Must be `0x00`. Reserved for future use; the proxy does not
+validate this byte.
 
 **Transaction ID (8:40)** — 32 bytes. The raw 256-bit txid in internal byte
 order as used in the BSV P2P protocol — **not** the reversed display order
@@ -60,7 +59,8 @@ counter assigned by the sender. `0` means unset. The proxy forwards this field
 unchanged.
 
 **Subtree ID (48:80)** — 32 bytes. An opaque batch identifier assigned by the
-transaction processor. All-zero bytes mean the field is unset.
+transaction processor. All-zero bytes mean the field is unset. The proxy
+forwards this field unchanged.
 
 **Payload length (80:84)** — `uint32` big-endian. The number of payload bytes
 immediately following the header. Must not exceed 10 MiB.
@@ -97,13 +97,12 @@ v1 and v2 — both versions share the same listener.
 ## 4. Subtree Model
 
 A *subtree* is an ordered set of related transactions sharing a common batch
-context. The `SubtreeID` and `SubtreeHeight` fields allow downstream subscribers
-to reconstruct the Merkle tree formed by the transactions in a subtree:
+context. The `SubtreeID` field allows downstream subscribers to associate
+frames with a named batch:
 
-- **`SubtreeID`** — identifies which subtree a transaction belongs to.
-- **`SubtreeHeight`** — the height of that Merkle tree (log₂ of leaf count).
+- **`SubtreeID`** — 32-byte opaque batch identifier; all-zero means unset.
 
-These fields are optional. The proxy passes them through unchanged.
+This field is optional. The proxy passes it through unchanged.
 
 ---
 

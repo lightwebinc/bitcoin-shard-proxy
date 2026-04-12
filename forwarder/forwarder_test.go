@@ -45,12 +45,11 @@ func makeTargets(t *testing.T, conns ...*net.UDPConn) []Target {
 	return tgts
 }
 
-func buildV2Frame(t *testing.T, txidByte0 byte, shardSeqNum uint64, subtreeHeight uint8, payload []byte) []byte {
+func buildV2Frame(t *testing.T, txidByte0 byte, shardSeqNum uint64, payload []byte) []byte {
 	t.Helper()
 	f := &frame.Frame{
-		ShardSeqNum:   shardSeqNum,
-		SubtreeHeight: subtreeHeight,
-		Payload:       payload,
+		ShardSeqNum: shardSeqNum,
+		Payload:     payload,
 	}
 	f.TxID[0] = txidByte0
 	buf := make([]byte, frame.HeaderSize+len(payload))
@@ -83,7 +82,7 @@ func makeForwarder() *Forwarder {
 func TestProcessV2FrameForwardedVerbatim(t *testing.T) {
 	conn, _ := openLoopbackUDP(t)
 	fw := makeForwarder()
-	raw := buildV2Frame(t, 0xAB, 999, 0, nil)
+	raw := buildV2Frame(t, 0xAB, 999, nil)
 	// WriteTo to multicast dst will fail on loopback — that's fine, no panic.
 	fw.Process(makeTargets(t, conn), raw, fakeAddr{}, 0)
 }
@@ -115,14 +114,14 @@ func TestProcessMultipleTargets(t *testing.T) {
 	conn1, _ := openLoopbackUDP(t)
 	conn2, _ := openLoopbackUDP(t)
 	fw := makeForwarder()
-	raw := buildV2Frame(t, 0xAB, 1, 0, nil)
+	raw := buildV2Frame(t, 0xAB, 1, nil)
 	fw.Process(makeTargets(t, conn1, conn2), raw, fakeAddr{}, 0)
 }
 
 func TestProcessDebugMode(t *testing.T) {
 	engine := shard.New(0xFF05, [11]byte{}, 8)
 	fw := New(engine, 9001, true, nil)
-	raw := buildV2Frame(t, 0xAB, 1, 0, nil)
+	raw := buildV2Frame(t, 0xAB, 1, nil)
 	conn, _ := openLoopbackUDP(t)
 	fw.Process(makeTargets(t, conn), raw, fakeAddr{}, 0)
 }

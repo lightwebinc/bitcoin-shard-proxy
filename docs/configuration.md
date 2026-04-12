@@ -84,8 +84,8 @@ Increasing bits by 1 splits every existing group into two child groups
 ## Forwarding
 
 The proxy forwards every frame verbatim (zero-copy `WriteTo`). No field
-modification occurs; `ShardSeqNum`, `SubtreeID`, and `SubtreeHeight` are
-passed through unchanged exactly as the sender set them.
+modification occurs; `ShardSeqNum` and `SubtreeID` are passed through unchanged
+exactly as the sender set them.
 
 ---
 

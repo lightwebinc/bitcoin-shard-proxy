@@ -44,9 +44,8 @@ func TestFrameVerV2(t *testing.T) {
 func TestRoundTrip(t *testing.T) {
 	payload := []byte("fake-bsv-tx-payload")
 	f := &Frame{
-		Payload:       payload,
-		ShardSeqNum:   0x0102030405060708,
-		SubtreeHeight: 20,
+		Payload:     payload,
+		ShardSeqNum: 0x0102030405060708,
 	}
 	f.TxID[0] = 0xAB
 	for i := range f.SubtreeID {
@@ -75,9 +74,6 @@ func TestRoundTrip(t *testing.T) {
 	if got.SubtreeID != f.SubtreeID {
 		t.Errorf("SubtreeID mismatch")
 	}
-	if got.SubtreeHeight != f.SubtreeHeight {
-		t.Errorf("SubtreeHeight = %d, want %d", got.SubtreeHeight, f.SubtreeHeight)
-	}
 	if !bytes.Equal(got.Payload, payload) {
 		t.Errorf("Payload mismatch: got %q, want %q", got.Payload, payload)
 	}
@@ -87,8 +83,7 @@ func TestRoundTrip(t *testing.T) {
 
 func TestFieldOffsets(t *testing.T) {
 	f := &Frame{
-		ShardSeqNum:   0xDEADBEEFCAFEBABE,
-		SubtreeHeight: 7,
+		ShardSeqNum: 0xDEADBEEFCAFEBABE,
 	}
 	f.TxID[0] = 0x11
 	for i := range f.SubtreeID {
@@ -104,8 +99,8 @@ func TestFieldOffsets(t *testing.T) {
 	if buf[6] != FrameVerV2 {
 		t.Errorf("buf[6] (FrameVer) = 0x%02X, want 0x%02X", buf[6], FrameVerV2)
 	}
-	if buf[7] != 7 {
-		t.Errorf("buf[7] (SubtreeHeight) = %d, want 7", buf[7])
+	if buf[7] != 0 {
+		t.Errorf("buf[7] (Reserved) = 0x%02X, want 0x00", buf[7])
 	}
 	if buf[8] != 0x11 {
 		t.Errorf("buf[8] (TxID[0]) = 0x%02X, want 0x11", buf[8])
@@ -190,9 +185,6 @@ func TestDecodeV1ZeroedV2Fields(t *testing.T) {
 	}
 	if f.SubtreeID != ([32]byte{}) {
 		t.Error("SubtreeID should be all zeros for v1")
-	}
-	if f.SubtreeHeight != 0 {
-		t.Errorf("SubtreeHeight = %d, want 0", f.SubtreeHeight)
 	}
 }
 

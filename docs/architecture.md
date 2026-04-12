@@ -58,7 +58,7 @@ Offset  Size  Align  Field
      0     4   —     Network magic    0xE3E1F3E8
      4     2   —     Protocol ver     0x02BF
      6     1   —     Frame version    0x02
-     7     1   1 B   Subtree height   uint8; 0 = unset
+     7     1   —     Reserved         0x00
      8    32   8 B   Transaction ID   raw 256-bit txid (internal byte order)
     40     8   8 B   Shard seq num    uint64 BE; 0 = unset
     48    32   8 B   Subtree ID       32-byte batch identifier; zeros = unset
@@ -66,10 +66,22 @@ Offset  Size  Align  Field
     84     *   —     BSV tx payload
 ```
 
-### v1 (legacy — accepted, forwarded verbatim)
+### v1 BRC-12 (legacy — 44 bytes, accepted, forwarded verbatim)
 
-v1 frames use a 44-byte header (`FrameVer = 0x01`). The proxy accepts them and
-forwards the original bytes unchanged. No re-encoding to v2 occurs.
+```
+Offset  Size  Align  Field            Value / notes
+------  ----  -----  -----            -------------
+     0     4   —     Network magic    0xE3E1F3E8
+     4     2   —     Protocol ver     0x02BF = 703
+     6     1   —     Frame version    0x01
+     7     1   —     Reserved         0x00
+     8    32   —     Transaction ID   raw 256-bit txid (internal byte order)
+    40     4   —     Payload length   uint32 BE; max 10 MiB
+    44     *   —     BSV tx payload   raw serialised transaction bytes
+```
+
+v1 frames carry no `ShardSeqNum`, `SubtreeID`, or reserved-byte fields beyond
+byte 7. The proxy accepts them and forwards the original bytes unchanged.
 
 ## Hot Path
 

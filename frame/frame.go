@@ -22,7 +22,7 @@
 //	     0     4   —     Network magic    0xE3E1F3E8  (BSV mainnet P2P magic)
 //	     4     2   —     Protocol ver     0x02BF = 703 (BSV node version baseline)
 //	     6     1   —     Frame version    0x02
-//	     7     1   1B    Subtree height   uint8; log₂(subtree capacity); 0 = unset
+//	     7     1   —     Reserved         0x00
 //	     8    32   8B    Transaction ID   raw 256-bit txid (NOT display-reversed)
 //	    40     8   8B    Shard seq num    uint64 BE; sender-assigned; 0 = unset
 //	    48    32   8B    Subtree ID       32-byte batch identifier assigned by tx processor; zeros = unset
@@ -36,8 +36,8 @@
 // # v1 handling
 //
 // [Decode] accepts both v1 and v2 frames. v1 frames are decoded into a [Frame]
-// with [Version] = [FrameVerV1] and zero-valued [ShardSeqNum], [SubtreeID], and
-// [SubtreeHeight]. The forwarder forwards v1 frames verbatim (no re-encoding).
+// with [Version] = [FrameVerV1] and zero-valued [ShardSeqNum] and [SubtreeID].
+// The forwarder forwards v1 frames verbatim (no re-encoding).
 // Unknown versions return [ErrBadVer].
 //
 // # BSV transaction format compatibility
@@ -107,12 +107,11 @@ var (
 // Payload is a zero-copy slice pointing into the buffer passed to [Decode];
 // the buffer must remain valid for the lifetime of the Frame.
 type Frame struct {
-	Version       byte     // FrameVerV1 or FrameVerV2 — set by Decode
-	TxID          [32]byte // Raw 256-bit transaction ID (internal byte order)
-	ShardSeqNum   uint64   // Monotonic sequence number; 0 = unset (always 0 for v1)
-	SubtreeID     [32]byte // 32-byte batch identifier; zeros = unset (always zero for v1)
-	SubtreeHeight uint8    // log₂(subtree capacity); 0 = unset (always 0 for v1)
-	Payload       []byte   // Raw serialised BSV transaction
+	Version     byte     // FrameVerV1 or FrameVerV2 — set by Decode
+	TxID        [32]byte // Raw 256-bit transaction ID (internal byte order)
+	ShardSeqNum uint64   // Monotonic sequence number; 0 = unset (always 0 for v1)
+	SubtreeID   [32]byte // 32-byte batch identifier; zeros = unset (always zero for v1)
+	Payload     []byte   // Raw serialised BSV transaction
 }
 
 // Encode serialises f into buf and returns the number of bytes written.
@@ -131,7 +130,7 @@ func Encode(f *Frame, buf []byte) (int, error) {
 	binary.BigEndian.PutUint32(buf[0:4], MagicBSV)
 	binary.BigEndian.PutUint16(buf[4:6], ProtoVer)
 	buf[6] = FrameVerV2
-	buf[7] = f.SubtreeHeight
+	buf[7] = 0
 	copy(buf[8:40], f.TxID[:])
 	binary.BigEndian.PutUint64(buf[40:48], f.ShardSeqNum)
 	copy(buf[48:80], f.SubtreeID[:])
@@ -147,8 +146,8 @@ func Encode(f *Frame, buf []byte) (int, error) {
 // not modify or reuse buf while the Frame is in scope.
 //
 // v1 frames (FrameVer 0x01) are decoded with [Version] = [FrameVerV1] and
-// zero-valued [ShardSeqNum], [SubtreeID], and [SubtreeHeight]. The forwarder
-// always re-encodes v1 frames as v2 on egress.
+// zero-valued [ShardSeqNum] and [SubtreeID]. The forwarder forwards v1 frames
+// verbatim (no re-encoding).
 //
 // Unknown versions return [ErrBadVer].
 //
@@ -206,7 +205,6 @@ func decodeV2(buf []byte) (*Frame, error) {
 		return nil, io.ErrUnexpectedEOF
 	}
 	f := &Frame{Version: FrameVerV2}
-	f.SubtreeHeight = buf[7]
 	copy(f.TxID[:], buf[8:40])
 	f.ShardSeqNum = binary.BigEndian.Uint64(buf[40:48])
 	copy(f.SubtreeID[:], buf[48:80])
