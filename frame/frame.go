@@ -24,7 +24,7 @@
 //	     6     1   —     Frame version    0x02
 //	     7     1   1B    Subtree height   uint8; log₂(subtree capacity); 0 = unset
 //	     8    32   8B    Transaction ID   raw 256-bit txid (NOT display-reversed)
-//	    40     8   8B    Shard seq num    uint64 BE; sender-assigned or proxy fallback; 0 = unset
+//	    40     8   8B    Shard seq num    uint64 BE; sender-assigned; 0 = unset
 //	    48    32   8B    Subtree ID       32-byte batch identifier assigned by tx processor; zeros = unset
 //	    80     4   8B    Payload length   uint32; max [MaxPayload] bytes
 //	    84     *   4B    BSV tx payload   raw serialised transaction bytes
@@ -37,8 +37,8 @@
 //
 // [Decode] accepts both v1 and v2 frames. v1 frames are decoded into a [Frame]
 // with [Version] = [FrameVerV1] and zero-valued [ShardSeqNum], [SubtreeID], and
-// [SubtreeHeight]. Callers (forwarder) always re-encode v1 frames as v2 on
-// egress. Unknown versions return [ErrBadVer].
+// [SubtreeHeight]. The forwarder forwards v1 frames verbatim (no re-encoding).
+// Unknown versions return [ErrBadVer].
 //
 // # BSV transaction format compatibility
 //

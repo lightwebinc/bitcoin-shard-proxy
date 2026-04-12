@@ -20,7 +20,7 @@ Offset  Size  Align  Field            Value / notes
      6     1   —     Frame version    0x02
      7     1   1 B   Subtree height   uint8; log₂(subtree capacity); 0 = unset
      8    32   8 B   Transaction ID   raw 256-bit txid (internal byte order)
-    40     8   8 B   Shard seq num    uint64 BE; 0 = unset / sender leaves for proxy
+    40     8   8 B   Shard seq num    uint64 BE; sender-assigned; 0 = unset
     48    32   8 B   Subtree ID       32-byte batch identifier; all-zeros = unset
     80     4   8 B   Payload length   uint32; max 10 MiB
     84     *   4 B   BSV tx payload   raw serialised transaction bytes
@@ -44,7 +44,7 @@ baseline that introduced the large-block policy. This field is informational;
 the proxy does not validate it.
 
 **Frame version (6)** — `0x02` for v2, `0x01` for v1 (see §3). Any other
-value is rejected. v1 frames are accepted and re-encoded as v2 on egress.
+value is rejected. Both v1 and v2 frames are forwarded verbatim.
 
 **Subtree height (7)** — `uint8`. The base-2 logarithm of the subtree capacity
 (e.g. `20` means the subtree holds up to 2²⁰ = 1,048,576 transactions). `0`
@@ -56,10 +56,8 @@ shown by block explorers. The top bits of `txid[0:4]` are used by the shard
 engine to derive the multicast group index.
 
 **Shard sequence number (40:48)** — `uint64` big-endian. A per-shard monotonic
-counter identifying the position of this frame in its multicast group's stream.
-`0` means the sender has not assigned a sequence number. When the proxy has
-`-proxy-seq` enabled (default) it stamps the next counter value for any frame
-with `ShardSeqNum == 0`.
+counter assigned by the sender. `0` means unset. The proxy forwards this field
+unchanged.
 
 **Subtree ID (48:80)** — 32 bytes. An opaque batch identifier assigned by the
 transaction processor. All-zero bytes mean the field is unset.
@@ -76,10 +74,7 @@ message envelope wraps it.
 ## 3. v1 BRC-12 Frame Format
 
 v1 frames use a 44-byte header and carry no sequence number or subtree fields.
-The proxy accepts them; on egress they are **re-encoded as v2** with
-`ShardSeqNum`, `SubtreeID`, and `SubtreeHeight` set to zero. If `-proxy-seq`
-is enabled (default), `ShardSeqNum` is stamped by the proxy before forwarding.
-All static subtree overrides also apply.
+The proxy accepts them and forwards them verbatim without modification.
 
 ```
 Offset  Size  Field
@@ -108,8 +103,7 @@ to reconstruct the Merkle tree formed by the transactions in a subtree:
 - **`SubtreeID`** — identifies which subtree a transaction belongs to.
 - **`SubtreeHeight`** — the height of that Merkle tree (log₂ of leaf count).
 
-These fields are optional. The proxy passes them through unchanged unless
-`-static-subtree-id` or `-static-subtree-height` overrides are configured.
+These fields are optional. The proxy passes them through unchanged.
 
 ---
 
@@ -192,7 +186,7 @@ All drops are counted in the `proxy_rx_drops_total` Prometheus metric with a
 |---|---|---|
 | `MagicBSV` | `0xE3E1F3E8` | BSV mainnet P2P magic |
 | `ProtoVer` | `0x02BF` | Protocol version 703 |
-| `FrameVerV1` | `0x01` | Legacy; rejected |
+| `FrameVerV1` | `0x01` | Legacy BRC-12; accepted, forwarded verbatim |
 | `FrameVerV2` | `0x02` | Current |
 | `HeaderSize` | `84` | v2 header bytes |
 | `MaxPayload` | `10485760` | 10 MiB |
