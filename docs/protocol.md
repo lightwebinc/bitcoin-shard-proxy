@@ -73,7 +73,7 @@ message envelope wraps it.
 
 ---
 
-## 3. v1 Frame Format (legacy, accepted)
+## 3. v1 BRC-12 Frame Format
 
 v1 frames use a 44-byte header and carry no sequence number or subtree fields.
 The proxy accepts them; on egress they are **re-encoded as v2** with
