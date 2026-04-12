@@ -16,9 +16,6 @@ as fallbacks; hard-coded defaults apply when neither is present.
 | `-scope` | `MC_SCOPE` | `site` | Multicast scope: `link` \| `site` \| `org` \| `global` |
 | `-mc-base-addr` | `MC_BASE_ADDR` | `""` | Base IPv6 address for assigned multicast address space (bytes 2–12) |
 | `-workers` | `NUM_WORKERS` | `runtime.NumCPU()` | Worker goroutine count (0 = NumCPU) |
-| `-proxy-seq` | `PROXY_SEQ` | `true` | Assign `ShardSeqNum` fallback when sender leaves it 0 |
-| `-static-subtree-id` | `STATIC_SUBTREE_ID` | `""` | Hex-encoded 32-byte `SubtreeID` override (empty = passthrough) |
-| `-static-subtree-height` | `STATIC_SUBTREE_HEIGHT` | `""` | `SubtreeHeight` override: `""` = passthrough; `"0"`–`"255"` = explicit value |
 | `-debug` | `DEBUG` | `false` | Enable per-packet debug logging and multicast loopback |
 | `-metrics-addr` | `METRICS_ADDR` | `:9100` | HTTP bind address for `/metrics`, `/healthz`, `/readyz` |
 | `-instance` | `INSTANCE_ID` | hostname | OTel `service.instance.id` for federation |
@@ -45,9 +42,9 @@ path.
 ### TCP ingress (optional)
 
 TCP ingress provides reliable, ordered delivery for senders that require it
-(e.g. over lossy links). Each accepted connection carries a stream of v2 frames
-concatenated end-to-end. The proxy reads the 84-byte header, extracts
-`PayLen`, then reads the payload.
+(e.g. over lossy links). Each accepted connection carries a stream of v1 or v2
+frames concatenated end-to-end. The proxy reads 44 bytes first, extends to 84
+bytes if v2, then reads `PayLen` payload bytes.
 
 TCP ingress is disabled by default. Enable it with:
 
@@ -84,67 +81,11 @@ Increasing bits by 1 splits every existing group into two child groups
 
 ---
 
-## Sequencing
+## Forwarding
 
-Each multicast group maintains an independent monotonic `ShardSeqNum` counter.
-Subscribers can use this counter to detect gaps (dropped datagrams) and to
-order out-of-order delivery.
-
-### `-proxy-seq` (default `true`)
-
-When enabled, the proxy stamps `ShardSeqNum` on any frame where the sender
-left it as `0`. The counter starts at 0 and increments atomically per group.
-
-```
--proxy-seq=false   # disable; forward ShardSeqNum verbatim (always 0 if sender
-                   # does not set it)
-```
-
-**Fast path:** if the sender already sets `ShardSeqNum != 0` and no static
-overrides are configured, the proxy forwards the original bytes verbatim
-(zero-copy `WriteTo`). Re-encoding only occurs when stamping is needed.
-
----
-
-## Static Subtree Overrides
-
-These flags override the `SubtreeID` and `SubtreeHeight` fields on **every**
-forwarded frame. They are useful when a single proxy deployment serves a fixed
-batch context.
-
-### `-static-subtree-id`
-
-A 64-character hexadecimal string representing 32 bytes. When set, the proxy
-replaces `SubtreeID` in every frame before forwarding.
-
-```bash
-# Override SubtreeID to all 0xAB bytes (32 bytes = 64 hex chars):
--static-subtree-id abababababababababababababababababababababababababababababababababab
-```
-
-Empty string (default) means passthrough — the sender's `SubtreeID` is
-preserved.
-
-### `-static-subtree-height`
-
-A decimal string in the range `"0"`–`"255"`. When set, the proxy replaces
-`SubtreeHeight` in every frame before forwarding. An empty string (default)
-means passthrough.
-
-**Note:** `"0"` is a valid override value (it explicitly sets `SubtreeHeight`
-to 0, meaning "unset"), distinct from the empty string which disables the
-override entirely.
-
-```bash
-# Force SubtreeHeight = 20 on all frames:
--static-subtree-height 20
-
-# Force SubtreeHeight = 0 (clear the field) on all frames:
--static-subtree-height 0
-
-# Passthrough (default):
-# -static-subtree-height ""
-```
+The proxy forwards every frame verbatim (zero-copy `WriteTo`). No field
+modification occurs; `ShardSeqNum`, `SubtreeID`, and `SubtreeHeight` are
+passed through unchanged exactly as the sender set them.
 
 ---
 
@@ -188,23 +129,13 @@ bitcoin-shard-proxy \
   -otlp-endpoint collector:4317
 ```
 
-### With TCP ingress and subtree overrides
+### With TCP ingress
 
 ```bash
 bitcoin-shard-proxy \
   -iface eth0 \
   -udp-listen-port 9000 \
-  -tcp-listen-port 9100 \
-  -static-subtree-id $(python3 -c "print('ab'*32)") \
-  -static-subtree-height 20
-```
-
-### Disable proxy sequence stamping
-
-```bash
-bitcoin-shard-proxy \
-  -iface eth0 \
-  -proxy-seq=false
+  -tcp-listen-port 9100
 ```
 
 ## Assigned address space

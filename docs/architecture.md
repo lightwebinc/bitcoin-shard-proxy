@@ -2,10 +2,10 @@
 
 ## Overview
 
-bitcoin-shard-proxy receives BSV v2 transaction frames over UDP (and optionally
-TCP), derives a deterministic multicast group address from each transaction's
-txid, optionally stamps a proxy-assigned sequence number and static subtree
-fields, then retransmits to all configured egress interfaces.
+bitcoin-shard-proxy receives BSV transaction frames (v1 or v2) over UDP (and
+optionally TCP), derives a deterministic multicast group address from each
+transaction's txid, then retransmits the original bytes verbatim to all
+configured egress interfaces.
 
 See [docs/protocol.md](protocol.md) for the complete wire format specification.
 
@@ -66,29 +66,18 @@ Offset  Size  Align  Field
     84     *   —     BSV tx payload
 ```
 
-### v1 (legacy — rejected)
+### v1 (legacy — accepted, forwarded verbatim)
 
-v1 frames (44-byte header, `FrameVer = 0x01`) are rejected at decode time with
-`ErrBadVer`. Senders must migrate to v2.
+v1 frames use a 44-byte header (`FrameVer = 0x01`). The proxy accepts them and
+forwards the original bytes unchanged. No re-encoding to v2 occurs.
 
-## Sequencing
+## Hot Path
 
-The `sequence` package provides one `atomic.Uint64` per shard group. When
-`-proxy-seq` is enabled (default), the forwarder increments the counter for the
-frame's group and stamps it into `ShardSeqNum` if the sender left it as `0`.
-Per-group counters eliminate false contention between shards.
+Every received datagram follows the same two-step path:
+1. `frame.Decode(raw)` — extract the TxID; drop on bad magic or unknown version.
+2. `WriteTo(raw)` — write the **original bytes verbatim** to every egress target.
 
-**Hot path decision:**
-- Sender set `ShardSeqNum != 0` and no static overrides → zero-copy `WriteTo(raw)`.
-- Otherwise → re-encode into per-worker `encodeBuf` then `WriteTo`.
-
-## Subtree Cross-linking
-
-`SubtreeID` (bytes 48–79) and `SubtreeHeight` (byte 7) allow downstream
-subscribers to reconstruct the Merkle tree for a batch of related transactions.
-The proxy can override both fields on all frames via `-static-subtree-id` and
-`-static-subtree-height` when the batch context is known statically at the
-proxy, rather than per-sender.
+No re-encoding, no field modification, no per-worker encode buffer.
 
 ## Graceful Shutdown
 
@@ -101,12 +90,11 @@ goroutines with `sync.WaitGroup`.
 
 ```
 bitcoin-shard-proxy/
-  main.go            entry point; wires config → engine → counters → forwarder → workers
+  main.go            entry point; wires config → engine → forwarder → workers
   config/            runtime configuration (flags + env vars + validation)
   shard/             txid → group index → IPv6 multicast address derivation
-  frame/             v2 wire format encode/decode; v1 rejection
-  sequence/          per-shard atomic uint64 sequence counters
-  forwarder/         decode → override → seq-stamp → egress forwarding pipeline
+  frame/             v1/v2 wire format decode; encode used by tests and tooling
+  forwarder/         decode → zero-copy verbatim forward pipeline
   worker/            per-CPU SO_REUSEPORT ingress loop; TCP ingress listener
   metrics/           OTel + Prometheus instrumentation
 ```
