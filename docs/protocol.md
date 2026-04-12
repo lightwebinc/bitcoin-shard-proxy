@@ -137,47 +137,37 @@ additional groups; no existing subscriptions become invalid.
 
 ---
 
-## 6. Proxy Transform Rules
+## 6. Proxy Forward Rules
 
-The proxy applies transforms in this order before forwarding:
+The proxy processes each incoming datagram in two steps:
 
-1. **Decode** — parse the v2 header; reject with error on bad magic, bad
-   version, oversized payload, or truncated datagram.
+1. **Decode** — parse the frame header (v1 or v2); drop with a debug log on
+   bad magic, unsupported version, oversized payload, or truncated datagram.
+   The TxID is extracted to derive the destination multicast group.
 
-2. **Static SubtreeID override** — if `-static-subtree-id` is set, replace
-   `SubtreeID` on every frame. Re-encoding is required.
-
-3. **Static SubtreeHeight override** — if `-static-subtree-height` is set,
-   replace `SubtreeHeight` on every frame (including with `0`). Re-encoding
-   is required.
-
-4. **Proxy sequence stamp** — if `-proxy-seq` is enabled (default `true`) and
-   `ShardSeqNum == 0`, stamp the next counter value for the frame's shard
-   group. Re-encoding is required.
-
-5. **Forward** — write to all configured egress interfaces via
-   `IPV6_MULTICAST_IF`.
-   - **Fast path** (zero-copy): if no re-encoding was required in steps 2–4,
-     the original raw bytes are written verbatim.
-   - **Re-encode path**: the frame is serialised into a per-worker buffer and
-     that buffer is written to all egress targets.
+2. **Forward (zero-copy)** — write the original raw bytes verbatim to every
+   configured egress interface via `IPV6_MULTICAST_IF`. The frame is never
+   modified; no re-encoding occurs.
 
 ---
 
 ## 7. TCP Ingress
 
 When `-tcp-listen-port` is non-zero, the proxy also accepts TCP connections for
-reliable frame delivery. The TCP wire format is identical to UDP: raw v2 frames
-concatenated end-to-end with no additional envelope.
+reliable frame delivery. The TCP wire format is identical to UDP: v1 or v2
+frames concatenated end-to-end with no additional envelope.
 
 **Read sequence per frame:**
-1. Read exactly 84 bytes (the v2 header).
-2. Extract `PayLen` from bytes 80–83.
+1. Read 44 bytes (minimum header, sufficient for both v1 and the start of v2).
+2. Inspect `FrameVer` at byte 6.
+   - **v1:** header is complete; `PayLen` is at bytes 40–43.
+   - **v2:** read 40 more bytes to complete the 84-byte header;
+     `PayLen` is at bytes 80–83.
 3. Read exactly `PayLen` bytes (the payload).
-4. Pass the reassembled frame through the same transform pipeline as UDP.
+4. Forward the reassembled raw bytes verbatim (same as UDP path).
 
 The proxy closes the TCP connection on any protocol violation (bad magic,
-unsupported frame version, payload exceeds 10 MiB, read error).
+unsupported version byte, `PayLen` exceeds 10 MiB, or read error).
 
 ---
 
@@ -186,7 +176,7 @@ unsupported frame version, payload exceeds 10 MiB, read error).
 | Condition | UDP | TCP |
 |---|---|---|
 | Bad magic | datagram silently dropped | connection closed |
-| Bad frame version (incl. v1) | datagram silently dropped | connection closed |
+| Unknown frame version (not v1/v2) | datagram silently dropped | connection closed |
 | PayLen > 10 MiB | datagram silently dropped | connection closed |
 | Truncated datagram | datagram silently dropped | read error → connection closed |
 | Egress write error | logged; next interface attempted | logged; next interface attempted |

@@ -9,7 +9,6 @@ import (
 	"testing"
 
 	"github.com/jefflightweb/bitcoin-shard-proxy/frame"
-	"github.com/jefflightweb/bitcoin-shard-proxy/sequence"
 	"github.com/jefflightweb/bitcoin-shard-proxy/shard"
 )
 
@@ -74,222 +73,58 @@ func buildV1Frame(t *testing.T, txidByte0 byte, payload []byte) []byte {
 	return buf
 }
 
-func makeForwarder(proxySeqEnabled bool, staticID []byte, staticHeight *uint8) *Forwarder {
+func makeForwarder() *Forwarder {
 	engine := shard.New(0xFF05, [11]byte{}, 8)
-	counters := sequence.NewCounters(engine.NumGroups())
-	return New(engine, counters, 9001, proxySeqEnabled, staticID, staticHeight, false, nil)
+	return New(engine, 9001, false, nil)
 }
 
-func encodeBuf() []byte { return make([]byte, frame.HeaderSize+frame.MaxPayload) }
+// ── forward path ─────────────────────────────────────────────────────────────
 
-// ── zero-copy fast path ───────────────────────────────────────────────────────
-
-func TestProcessSenderAssignedSeqPassthrough(t *testing.T) {
+func TestProcessV2FrameForwardedVerbatim(t *testing.T) {
 	conn, _ := openLoopbackUDP(t)
-	fw := makeForwarder(true, nil, nil)
+	fw := makeForwarder()
 	raw := buildV2Frame(t, 0xAB, 999, 0, nil)
-	// ShardSeqNum != 0 and no static overrides: fast path (zero-copy).
 	// WriteTo to multicast dst will fail on loopback — that's fine, no panic.
-	fw.Process(makeTargets(t, conn), encodeBuf(), raw, fakeAddr{}, 0)
-}
-
-// ── proxy-assigned sequence ───────────────────────────────────────────────────
-
-func TestProcessProxyAssignsSeqWhenZero(t *testing.T) {
-	fw := makeForwarder(true, nil, nil)
-	raw := buildV2Frame(t, 0x00, 0, 0, nil)
-
-	buf := encodeBuf()
-	var encoded []byte
-	// Capture written bytes by intercepting at encode step via a sink target.
-	// We use a real loopback socket but the write will fail — we verify seq
-	// by re-decoding the encodeBuf after the call.
-
-	// Process once — should stamp seq=0.
-	conn, _ := openLoopbackUDP(t)
-	targets := makeTargets(t, conn)
-	fw.Process(targets, buf, raw, fakeAddr{}, 0)
-
-	// First call stamps seq=0.
-	got, err := frame.Decode(buf[:frame.HeaderSize])
-	if err != nil {
-		t.Fatalf("re-decode: %v", err)
-	}
-	if got.ShardSeqNum != 0 {
-		t.Errorf("first call: ShardSeqNum = %d, want 0", got.ShardSeqNum)
-	}
-
-	// Second call should stamp seq=1.
-	raw2 := buildV2Frame(t, 0x00, 0, 0, nil)
-	buf2 := encodeBuf()
-	fw.Process(targets, buf2, raw2, fakeAddr{}, 0)
-	got2, err := frame.Decode(buf2[:frame.HeaderSize])
-	if err != nil {
-		t.Fatalf("re-decode 2: %v", err)
-	}
-	if got2.ShardSeqNum != 1 {
-		t.Errorf("second call: ShardSeqNum = %d, want 1", got2.ShardSeqNum)
-	}
-	_ = encoded
-}
-
-func TestProcessProxySeqDisabled(t *testing.T) {
-	fw := makeForwarder(false, nil, nil)
-	raw := buildV2Frame(t, 0x00, 0, 0, nil)
-	buf := encodeBuf()
-	conn, _ := openLoopbackUDP(t)
-	fw.Process(makeTargets(t, conn), buf, raw, fakeAddr{}, 0)
-	// ProxySeq disabled: no re-encode, buf unchanged from initial zeros.
-	// Verify buf[40:48] (ShardSeqNum) is still 0 (encodeBuf not written).
-	for _, b := range buf[40:48] {
-		if b != 0 {
-			t.Error("encodeBuf was written but ProxySeq disabled — expected fast path")
-			break
-		}
-	}
-}
-
-// ── static overrides ──────────────────────────────────────────────────────────
-
-func TestProcessStaticSubtreeIDOverride(t *testing.T) {
-	staticID := make([]byte, 32)
-	for i := range staticID {
-		staticID[i] = 0xBB
-	}
-	fw := makeForwarder(false, staticID, nil)
-	raw := buildV2Frame(t, 0x00, 1, 0, nil)
-	buf := encodeBuf()
-	conn, _ := openLoopbackUDP(t)
-	fw.Process(makeTargets(t, conn), buf, raw, fakeAddr{}, 0)
-
-	got, err := frame.Decode(buf[:frame.HeaderSize])
-	if err != nil {
-		t.Fatalf("re-decode: %v", err)
-	}
-	for i, b := range got.SubtreeID {
-		if b != 0xBB {
-			t.Errorf("SubtreeID[%d] = 0x%02X, want 0xBB", i, b)
-			break
-		}
-	}
-}
-
-func TestProcessStaticSubtreeHeightOverride(t *testing.T) {
-	h := uint8(15)
-	fw := makeForwarder(false, nil, &h)
-	raw := buildV2Frame(t, 0x00, 1, 0, nil)
-	buf := encodeBuf()
-	conn, _ := openLoopbackUDP(t)
-	fw.Process(makeTargets(t, conn), buf, raw, fakeAddr{}, 0)
-
-	got, err := frame.Decode(buf[:frame.HeaderSize])
-	if err != nil {
-		t.Fatalf("re-decode: %v", err)
-	}
-	if got.SubtreeHeight != 15 {
-		t.Errorf("SubtreeHeight = %d, want 15", got.SubtreeHeight)
-	}
-}
-
-func TestProcessStaticSubtreeHeightZero(t *testing.T) {
-	h := uint8(0)
-	fw := makeForwarder(false, nil, &h)
-	raw := buildV2Frame(t, 0x00, 1, 20, nil)
-	buf := encodeBuf()
-	conn, _ := openLoopbackUDP(t)
-	fw.Process(makeTargets(t, conn), buf, raw, fakeAddr{}, 0)
-
-	got, err := frame.Decode(buf[:frame.HeaderSize])
-	if err != nil {
-		t.Fatalf("re-decode: %v", err)
-	}
-	if got.SubtreeHeight != 0 {
-		t.Errorf("SubtreeHeight = %d, want 0 (explicit zero override)", got.SubtreeHeight)
-	}
+	fw.Process(makeTargets(t, conn), raw, fakeAddr{}, 0)
 }
 
 // ── error paths ───────────────────────────────────────────────────────────────
 
 func TestProcessInvalidFrame(t *testing.T) {
-	fw := makeForwarder(true, nil, nil)
+	fw := makeForwarder()
 	conn, _ := openLoopbackUDP(t)
 	// Truncated buffer — must not panic.
-	fw.Process(makeTargets(t, conn), encodeBuf(), []byte{0x00, 0x01}, fakeAddr{}, 0)
+	fw.Process(makeTargets(t, conn), []byte{0x00, 0x01}, fakeAddr{}, 0)
 }
 
 func TestProcessBadMagic(t *testing.T) {
-	fw := makeForwarder(true, nil, nil)
+	fw := makeForwarder()
 	conn, _ := openLoopbackUDP(t)
-	fw.Process(makeTargets(t, conn), encodeBuf(), make([]byte, frame.HeaderSize), fakeAddr{}, 0)
+	fw.Process(makeTargets(t, conn), make([]byte, frame.HeaderSize), fakeAddr{}, 0)
 }
 
-func TestProcessV1FrameRejected(t *testing.T) {
-	fw := makeForwarder(true, nil, nil)
+func TestProcessV1FrameForwardedVerbatim(t *testing.T) {
+	fw := makeForwarder()
 	conn, _ := openLoopbackUDP(t)
-	v1 := make([]byte, 44)
-	v1[0], v1[1], v1[2], v1[3] = 0xE3, 0xE1, 0xF3, 0xE8
-	v1[6] = 0x01 // v1 FrameVer
-	fw.Process(makeTargets(t, conn), encodeBuf(), v1, fakeAddr{}, 0)
-	// Must not panic; decode error is handled gracefully.
+	v1 := buildV1Frame(t, 0xAB, nil)
+	// v1 frames are forwarded verbatim; must not panic.
+	fw.Process(makeTargets(t, conn), v1, fakeAddr{}, 0)
 }
 
 func TestProcessMultipleTargets(t *testing.T) {
 	conn1, _ := openLoopbackUDP(t)
 	conn2, _ := openLoopbackUDP(t)
-	fw := makeForwarder(true, nil, nil)
+	fw := makeForwarder()
 	raw := buildV2Frame(t, 0xAB, 1, 0, nil)
-	fw.Process(makeTargets(t, conn1, conn2), encodeBuf(), raw, fakeAddr{}, 0)
-}
-
-// ── v1 ingress \u2192 v2 egress ──────────────────────────────────────────────────────
-
-func TestProcessV1FrameReencode(t *testing.T) {
-	// v1 frames have a 44-byte header; they must always be re-encoded to v2.
-	// Use empty payload so the re-encoded v2 frame fits in exactly HeaderSize bytes.
-	raw := buildV1Frame(t, 0xAB, nil)
-	fw := makeForwarder(false, nil, nil) // proxy-seq off: ShardSeqNum stays 0
-	conn, _ := openLoopbackUDP(t)
-	buf := encodeBuf()
-	fw.Process(makeTargets(t, conn), buf, raw, fakeAddr{}, 0)
-
-	// buf should now contain a v2-encoded frame (the WriteTo to multicast
-	// fails on loopback, but Encode was called into buf before WriteTo).
-	got, err := frame.Decode(buf[:frame.HeaderSize])
-	if err != nil {
-		t.Fatalf("re-decode: %v", err)
-	}
-	if got.Version != frame.FrameVerV2 {
-		t.Errorf("egress Version = 0x%02X, want 0x%02X (v2)", got.Version, frame.FrameVerV2)
-	}
-	if got.TxID[0] != 0xAB {
-		t.Errorf("TxID[0] = 0x%02X, want 0xAB", got.TxID[0])
-	}
-}
-
-func TestProcessV1FrameWithProxySeq(t *testing.T) {
-	// v1 frame + proxy-seq enabled: ShardSeqNum should be stamped.
-	raw := buildV1Frame(t, 0xAB, nil)
-	fw := makeForwarder(true, nil, nil) // proxy-seq on
-	conn, _ := openLoopbackUDP(t)
-	buf := encodeBuf()
-	fw.Process(makeTargets(t, conn), buf, raw, fakeAddr{}, 0)
-
-	got, err := frame.Decode(buf[:frame.HeaderSize])
-	if err != nil {
-		t.Fatalf("re-decode: %v", err)
-	}
-	if got.ShardSeqNum != 0 {
-		t.Errorf("first v1 frame seq = %d, want 0 (first counter value)", got.ShardSeqNum)
-	}
+	fw.Process(makeTargets(t, conn1, conn2), raw, fakeAddr{}, 0)
 }
 
 func TestProcessDebugMode(t *testing.T) {
 	engine := shard.New(0xFF05, [11]byte{}, 8)
-	counters := sequence.NewCounters(engine.NumGroups())
-	fw := New(engine, counters, 9001, false, nil, nil, true, nil)
+	fw := New(engine, 9001, true, nil)
 	raw := buildV2Frame(t, 0xAB, 1, 0, nil)
 	conn, _ := openLoopbackUDP(t)
-	fw.Process(makeTargets(t, conn), encodeBuf(), raw, fakeAddr{}, 0)
+	fw.Process(makeTargets(t, conn), raw, fakeAddr{}, 0)
 }
 
 // ── OpenTargets / CloseTargets ────────────────────────────────────────────────
@@ -305,7 +140,7 @@ func realIface(t *testing.T) *net.Interface {
 
 func TestOpenAndCloseTargets(t *testing.T) {
 	iface := realIface(t)
-	fw := makeForwarder(false, nil, nil)
+	fw := makeForwarder()
 	targets, err := fw.OpenTargets([]*net.Interface{iface}, false)
 	if err != nil {
 		t.Skipf("OpenTargets(%s): %v", iface.Name, err)
@@ -317,7 +152,7 @@ func TestOpenAndCloseTargets(t *testing.T) {
 }
 
 func TestOpenTargetsEmpty(t *testing.T) {
-	fw := makeForwarder(false, nil, nil)
+	fw := makeForwarder()
 	targets, err := fw.OpenTargets(nil, false)
 	if err != nil {
 		t.Errorf("OpenTargets(nil): unexpected error: %v", err)
@@ -329,7 +164,7 @@ func TestOpenTargetsEmpty(t *testing.T) {
 
 func TestOpenTargetsProbe(t *testing.T) {
 	iface := realIface(t)
-	fw := makeForwarder(false, nil, nil)
+	fw := makeForwarder()
 	targets, err := fw.OpenTargets([]*net.Interface{iface}, true)
 	if err != nil {
 		t.Skipf("OpenTargets probe(%s): %v", iface.Name, err)

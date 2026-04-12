@@ -4,7 +4,6 @@ import (
 	"flag"
 	"net"
 	"os"
-	"strings"
 	"testing"
 	"time"
 )
@@ -54,9 +53,6 @@ func TestLoadDefaults(t *testing.T) {
 	}
 	if cfg.UDPListenPort != 9000 {
 		t.Errorf("UDPListenPort = %d, want 9000", cfg.UDPListenPort)
-	}
-	if !cfg.ProxySeqEnabled {
-		t.Error("ProxySeqEnabled should default to true")
 	}
 	if cfg.EgressPort != 9001 {
 		t.Errorf("EgressPort = %d, want 9001", cfg.EgressPort)
@@ -305,111 +301,6 @@ func TestLoadTCPListenPortDefault(t *testing.T) {
 	}
 	if cfg.TCPListenPort != 0 {
 		t.Errorf("TCPListenPort = %d, want 0 (disabled)", cfg.TCPListenPort)
-	}
-}
-
-func TestLoadProxySeqDisabled(t *testing.T) {
-	iface := realIface(t)
-	cfg, err := parseArgs(t, []string{"-iface", iface, "-proxy-seq=false"})
-	if err != nil {
-		t.Fatalf("Load: %v", err)
-	}
-	if cfg.ProxySeqEnabled {
-		t.Error("ProxySeqEnabled should be false")
-	}
-}
-
-func TestLoadStaticSubtreeIDValid(t *testing.T) {
-	iface := realIface(t)
-	hex64 := strings.Repeat("ab", 32) // exactly 64 hex chars = 32 bytes
-	cfg, err := parseArgs(t, []string{"-iface", iface, "-static-subtree-id", hex64})
-	if err != nil {
-		t.Fatalf("Load: %v", err)
-	}
-	if len(cfg.StaticSubtreeID) != 32 {
-		t.Errorf("StaticSubtreeID len = %d, want 32", len(cfg.StaticSubtreeID))
-	}
-	for i, b := range cfg.StaticSubtreeID {
-		if b != 0xAB {
-			t.Errorf("StaticSubtreeID[%d] = 0x%02X, want 0xAB", i, b)
-			break
-		}
-	}
-}
-
-func TestLoadStaticSubtreeIDInvalidHex(t *testing.T) {
-	iface := realIface(t)
-	_, err := parseArgs(t, []string{"-iface", iface, "-static-subtree-id", "notvalidhex"})
-	if err == nil {
-		t.Error("want error for invalid hex, got nil")
-	}
-}
-
-func TestLoadStaticSubtreeIDWrongLength(t *testing.T) {
-	iface := realIface(t)
-	_, err := parseArgs(t, []string{"-iface", iface, "-static-subtree-id", "abab"})
-	if err == nil {
-		t.Error("want error for wrong-length subtree ID, got nil")
-	}
-}
-
-func TestLoadStaticSubtreeIDPassthrough(t *testing.T) {
-	iface := realIface(t)
-	cfg, err := parseArgs(t, []string{"-iface", iface})
-	if err != nil {
-		t.Fatalf("Load: %v", err)
-	}
-	if cfg.StaticSubtreeID != nil {
-		t.Error("StaticSubtreeID should be nil when not set")
-	}
-}
-
-func TestLoadStaticSubtreeHeightValid(t *testing.T) {
-	iface := realIface(t)
-	cfg, err := parseArgs(t, []string{"-iface", iface, "-static-subtree-height", "20"})
-	if err != nil {
-		t.Fatalf("Load: %v", err)
-	}
-	if cfg.StaticSubtreeHeight == nil || *cfg.StaticSubtreeHeight != 20 {
-		t.Errorf("StaticSubtreeHeight = %v, want *20", cfg.StaticSubtreeHeight)
-	}
-}
-
-func TestLoadStaticSubtreeHeightZero(t *testing.T) {
-	iface := realIface(t)
-	cfg, err := parseArgs(t, []string{"-iface", iface, "-static-subtree-height", "0"})
-	if err != nil {
-		t.Fatalf("Load: %v", err)
-	}
-	if cfg.StaticSubtreeHeight == nil || *cfg.StaticSubtreeHeight != 0 {
-		t.Errorf("StaticSubtreeHeight = %v, want *0", cfg.StaticSubtreeHeight)
-	}
-}
-
-func TestLoadStaticSubtreeHeightPassthrough(t *testing.T) {
-	iface := realIface(t)
-	cfg, err := parseArgs(t, []string{"-iface", iface})
-	if err != nil {
-		t.Fatalf("Load: %v", err)
-	}
-	if cfg.StaticSubtreeHeight != nil {
-		t.Errorf("StaticSubtreeHeight should be nil when not set, got %v", cfg.StaticSubtreeHeight)
-	}
-}
-
-func TestLoadStaticSubtreeHeightInvalid(t *testing.T) {
-	iface := realIface(t)
-	_, err := parseArgs(t, []string{"-iface", iface, "-static-subtree-height", "256"})
-	if err == nil {
-		t.Error("want error for subtree height > 255, got nil")
-	}
-}
-
-func TestLoadStaticSubtreeHeightNotANumber(t *testing.T) {
-	iface := realIface(t)
-	_, err := parseArgs(t, []string{"-iface", iface, "-static-subtree-height", "twenty"})
-	if err == nil {
-		t.Error("want error for non-numeric subtree height, got nil")
 	}
 }
 

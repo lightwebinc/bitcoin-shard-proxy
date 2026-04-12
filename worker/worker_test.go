@@ -11,7 +11,6 @@ import (
 
 	"github.com/jefflightweb/bitcoin-shard-proxy/forwarder"
 	"github.com/jefflightweb/bitcoin-shard-proxy/frame"
-	"github.com/jefflightweb/bitcoin-shard-proxy/sequence"
 	"github.com/jefflightweb/bitcoin-shard-proxy/shard"
 )
 
@@ -19,8 +18,7 @@ import (
 
 func makeTestForwarder() *forwarder.Forwarder {
 	engine := shard.New(0xFF05, [11]byte{}, 8)
-	counters := sequence.NewCounters(engine.NumGroups())
-	return forwarder.New(engine, counters, 9001, true, nil, nil, false, nil)
+	return forwarder.New(engine, 9001, false, nil)
 }
 
 func TestNew(t *testing.T) {

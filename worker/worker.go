@@ -28,7 +28,6 @@ import (
 	"golang.org/x/sys/unix"
 
 	"github.com/jefflightweb/bitcoin-shard-proxy/forwarder"
-	"github.com/jefflightweb/bitcoin-shard-proxy/frame"
 	"github.com/jefflightweb/bitcoin-shard-proxy/metrics"
 )
 
@@ -144,10 +143,8 @@ func (w *Worker) Run(listenAddr string, listenPort int, done <-chan struct{}) er
 		defer w.rec.WorkerDone()
 	}
 
-	// Allocate per-worker buffers. encodeBuf is used by the forwarder when
-	// re-encoding is required (proxy-assigned seq or static overrides).
+	// Allocate per-worker receive buffer.
 	buf := make([]byte, RecvBufSize)
-	encodeBuf := make([]byte, frame.HeaderSize+frame.MaxPayload)
 
 	for {
 		n, src, err := conn.ReadFrom(buf)
@@ -174,7 +171,7 @@ func (w *Worker) Run(listenAddr string, listenPort int, done <-chan struct{}) er
 		if w.rec != nil && len(targets) > 0 {
 			w.rec.PacketReceived(targets[0].Iface.Name, w.id, n)
 		}
-		w.fwd.Process(targets, encodeBuf, buf[:n], src, w.id)
+		w.fwd.Process(targets, buf[:n], src, w.id)
 	}
 }
 

@@ -99,7 +99,6 @@ func (ti *TCPIngress) handleConn(conn net.Conn, targets []forwarder.Target) {
 
 	br := bufio.NewReaderSize(conn, tcpBufSize)
 	connEncodeBuf := make([]byte, frame.HeaderSize+frame.MaxPayload)
-	encodeBuf := make([]byte, frame.HeaderSize+frame.MaxPayload)
 
 	for {
 		// Step 1: read the v1 minimum header (44 bytes). This covers both
@@ -153,6 +152,6 @@ func (ti *TCPIngress) handleConn(conn net.Conn, targets []forwarder.Target) {
 			}
 		}
 
-		ti.fwd.Process(targets, encodeBuf, connEncodeBuf[:hdrSize+payLen], remote, -1)
+		ti.fwd.Process(targets, connEncodeBuf[:hdrSize+payLen], remote, -1)
 	}
 }

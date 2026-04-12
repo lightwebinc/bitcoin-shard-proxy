@@ -1,13 +1,11 @@
-// Package forwarder implements the decode → override → sequence → forward
-// pipeline for bitcoin-shard-proxy.
+// Package forwarder implements the decode → forward pipeline for
+// bitcoin-shard-proxy.
 //
 // # Hot path
 //
-// [Forwarder.Process] decodes the v2 frame, optionally stamps static overrides
-// and a proxy-assigned ShardSeqNum, then writes to every configured egress
-// target. When no re-encoding is required (sender-assigned ShardSeqNum ≠ 0 and
-// no static overrides active), the original raw bytes are forwarded verbatim
-// via a zero-copy [net.UDPConn.WriteTo] call.
+// [Forwarder.Process] decodes the ingress frame (v1 or v2), derives the
+// multicast group from the TxID, and writes the original raw bytes verbatim
+// to every configured egress target — zero-copy, no modification.
 //
 // # Egress socket lifecycle
 //
@@ -26,7 +24,6 @@ import (
 
 	"github.com/jefflightweb/bitcoin-shard-proxy/frame"
 	"github.com/jefflightweb/bitcoin-shard-proxy/metrics"
-	"github.com/jefflightweb/bitcoin-shard-proxy/sequence"
 	"github.com/jefflightweb/bitcoin-shard-proxy/shard"
 )
 
@@ -36,52 +33,31 @@ type Target struct {
 	Conn  *net.UDPConn
 }
 
-// Forwarder decodes v2 ingress frames, applies static field overrides and
-// proxy-assigned sequence numbers (when configured), then forwards each frame
-// to all egress targets.
+// Forwarder decodes ingress frames (v1 or v2), derives the multicast
+// destination from the TxID, and forwards the raw bytes verbatim to all
+// egress targets.
 type Forwarder struct {
-	engine              *shard.Engine
-	counters            *sequence.Counters
-	egressPort          int
-	proxySeqEnabled     bool
-	staticSubtreeID     []byte // nil = passthrough; len 32 = override all frames
-	staticSubtreeHeight *uint8 // nil = passthrough; non-nil (incl. *0) = override all frames
-	debug               bool
-	rec                 *metrics.Recorder
-	log                 *slog.Logger
+	engine     *shard.Engine
+	egressPort int
+	debug      bool
+	rec        *metrics.Recorder
+	log        *slog.Logger
 }
 
 // New creates a Forwarder. No sockets are opened here; call [OpenTargets] in
 // each worker's Run loop.
 //
 //   - engine: immutable shard derivation engine.
-//   - counters: per-shard atomic sequence counters; may be nil when proxySeqEnabled is false.
 //   - egressPort: UDP destination port written into outgoing multicast datagrams.
-//   - proxySeqEnabled: stamp ShardSeqNum when sender leaves it 0.
-//   - staticSubtreeID: override SubtreeID on every frame (nil = passthrough).
-//   - staticSubtreeHeight: override SubtreeHeight on every frame (nil = passthrough; *0 is valid).
 //   - debug: enable per-packet debug logging.
 //   - rec: metrics recorder; may be nil.
-func New(
-	engine *shard.Engine,
-	counters *sequence.Counters,
-	egressPort int,
-	proxySeqEnabled bool,
-	staticSubtreeID []byte,
-	staticSubtreeHeight *uint8,
-	debug bool,
-	rec *metrics.Recorder,
-) *Forwarder {
+func New(engine *shard.Engine, egressPort int, debug bool, rec *metrics.Recorder) *Forwarder {
 	return &Forwarder{
-		engine:              engine,
-		counters:            counters,
-		egressPort:          egressPort,
-		proxySeqEnabled:     proxySeqEnabled,
-		staticSubtreeID:     staticSubtreeID,
-		staticSubtreeHeight: staticSubtreeHeight,
-		debug:               debug,
-		rec:                 rec,
-		log:                 slog.Default().With("component", "forwarder"),
+		engine:     engine,
+		egressPort: egressPort,
+		debug:      debug,
+		rec:        rec,
+		log:        slog.Default().With("component", "forwarder"),
 	}
 }
 
@@ -127,12 +103,11 @@ func closeTargets(targets []Target, log *slog.Logger) {
 	}
 }
 
-// Process is the hot path: decode raw, apply overrides, forward.
+// Process is the hot path: decode raw for routing, then forward verbatim.
 //
-// encodeBuf is a caller-supplied scratch buffer used when re-encoding is
-// required. It must be at least frame.HeaderSize + frame.MaxPayload bytes.
-// workerID is used only for metrics labels.
-func (fw *Forwarder) Process(targets []Target, encodeBuf []byte, raw []byte, src net.Addr, workerID int) {
+// The original raw bytes are written to every egress target unchanged
+// (zero-copy). workerID is used only for metrics labels.
+func (fw *Forwarder) Process(targets []Target, raw []byte, src net.Addr, workerID int) {
 	f, err := frame.Decode(raw)
 	if err != nil {
 		fw.log.Debug("frame decode error", "err", err, "len", len(raw))
@@ -145,39 +120,10 @@ func (fw *Forwarder) Process(targets []Target, encodeBuf []byte, raw []byte, src
 	groupIdx := fw.engine.GroupIndex(&f.TxID)
 	dst := fw.engine.Addr(groupIdx, fw.egressPort)
 
-	// v1 frames must be re-encoded as v2 on egress (different header size).
-	// Static overrides and proxy-seq also force re-encode below.
-	needReencode := f.Version != frame.FrameVerV2
-	if fw.staticSubtreeID != nil {
-		copy(f.SubtreeID[:], fw.staticSubtreeID)
-		needReencode = true
-	}
-	if fw.staticSubtreeHeight != nil {
-		f.SubtreeHeight = *fw.staticSubtreeHeight
-		needReencode = true
-	}
-
-	// Proxy-assigned sequence number (fallback path).
-	if fw.proxySeqEnabled && f.ShardSeqNum == 0 {
-		f.ShardSeqNum = fw.counters.Next(groupIdx)
-		needReencode = true
-	}
-
 	for _, tgt := range targets {
 		dst.Zone = tgt.Iface.Name
-		var writeErr error
-		if needReencode {
-			n, err := frame.Encode(f, encodeBuf)
-			if err != nil {
-				fw.log.Error("frame encode error", "err", err)
-				return
-			}
-			_, writeErr = tgt.Conn.WriteTo(encodeBuf[:n], dst)
-		} else {
-			_, writeErr = tgt.Conn.WriteTo(raw, dst)
-		}
-		if writeErr != nil {
-			fw.log.Warn("WriteTo error", "iface", tgt.Iface.Name, "dst", dst, "err", writeErr)
+		if _, err := tgt.Conn.WriteTo(raw, dst); err != nil {
+			fw.log.Warn("WriteTo error", "iface", tgt.Iface.Name, "dst", dst, "err", err)
 			if fw.rec != nil {
 				fw.rec.PacketDropped(tgt.Iface.Name, workerID, "write_error")
 				fw.rec.EgressError(tgt.Iface.Name, workerID)
@@ -193,8 +139,6 @@ func (fw *Forwarder) Process(targets []Target, encodeBuf []byte, raw []byte, src
 		fw.log.Debug("forwarded",
 			"txid_prefix", fmt.Sprintf("%08X", groupIdx),
 			"group_idx", groupIdx,
-			"seq", f.ShardSeqNum,
-			"reencoded", needReencode,
 			"src", src,
 			"dst", dst,
 		)

@@ -50,7 +50,6 @@ import (
 	"github.com/jefflightweb/bitcoin-shard-proxy/config"
 	"github.com/jefflightweb/bitcoin-shard-proxy/forwarder"
 	"github.com/jefflightweb/bitcoin-shard-proxy/metrics"
-	"github.com/jefflightweb/bitcoin-shard-proxy/sequence"
 	"github.com/jefflightweb/bitcoin-shard-proxy/shard"
 	"github.com/jefflightweb/bitcoin-shard-proxy/worker"
 )
@@ -103,20 +102,14 @@ func main() {
 		"tcp_listen_port", cfg.TCPListenPort,
 		"egress_port", cfg.EgressPort,
 		"ifaces", cfg.EgressIfaces,
-		"proxy_seq", cfg.ProxySeqEnabled,
 		"debug", cfg.Debug,
 		"metrics_addr", cfg.MetricsAddr,
 		"instance_id", cfg.InstanceID,
 		"version", metrics.Version,
 	)
 
-	// Construct per-shard sequence counters and the shared forwarder.
-	counters := sequence.NewCounters(engine.NumGroups())
-	fwd := forwarder.New(
-		engine, counters, cfg.EgressPort,
-		cfg.ProxySeqEnabled, cfg.StaticSubtreeID, cfg.StaticSubtreeHeight,
-		cfg.Debug, rec,
-	)
+	// Construct the shared forwarder.
+	fwd := forwarder.New(engine, cfg.EgressPort, cfg.Debug, rec)
 
 	// done is closed to signal all workers to stop their receive loops.
 	done := make(chan struct{})
