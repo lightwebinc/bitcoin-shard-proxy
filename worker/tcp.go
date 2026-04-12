@@ -93,7 +93,7 @@ func (ti *TCPIngress) Run(listenAddr string, listenPort int, done <-chan struct{
 // The connection is closed on any read error or protocol violation.
 // Each goroutine owns its own encode and assembly buffers.
 func (ti *TCPIngress) handleConn(conn net.Conn, targets []forwarder.Target) {
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 	remote := conn.RemoteAddr()
 	ti.log.Debug("TCP connection accepted", "remote", remote)
 

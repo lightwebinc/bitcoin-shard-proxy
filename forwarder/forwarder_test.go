@@ -29,7 +29,7 @@ func openLoopbackUDP(t *testing.T) (*net.UDPConn, *net.UDPAddr) {
 	if err != nil {
 		t.Skipf("ListenUDP loopback: %v", err)
 	}
-	t.Cleanup(func() { conn.Close() })
+	t.Cleanup(func() { _ = conn.Close() })
 	return conn, conn.LocalAddr().(*net.UDPAddr)
 }
 
@@ -211,6 +211,6 @@ func TestProbeEgressSocketLoopback(t *testing.T) {
 func TestProbeEgressSocketClosedConn(t *testing.T) {
 	conn, _ := openLoopbackUDP(t)
 	iface := &net.Interface{Index: 1, Name: "lo"}
-	conn.Close()
+	_ = conn.Close()
 	_ = probeEgressSocket(slog.Default(), conn, iface)
 }

@@ -242,7 +242,7 @@ func TestEnvIntInvalid(t *testing.T) {
 }
 
 func TestEnvBoolFallback(t *testing.T) {
-	os.Unsetenv("TEST_ENV_BOOL_KEY")
+	_ = os.Unsetenv("TEST_ENV_BOOL_KEY")
 	if got := envBool("TEST_ENV_BOOL_KEY", true); !got {
 		t.Error("envBool: expected fallback true")
 	}

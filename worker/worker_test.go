@@ -170,7 +170,7 @@ func dialHandleConn(t *testing.T, write func(net.Conn)) {
 	if err != nil {
 		t.Skipf("TCP loopback unavailable: %v", err)
 	}
-	defer ln.Close()
+	defer func() { _ = ln.Close() }()
 
 	clientConn, err := net.Dial("tcp6", ln.Addr().String())
 	if err != nil {
@@ -193,7 +193,7 @@ func dialHandleConn(t *testing.T, write func(net.Conn)) {
 	}()
 
 	write(clientConn)
-	clientConn.Close()
+	_ = clientConn.Close()
 
 	select {
 	case <-done:
