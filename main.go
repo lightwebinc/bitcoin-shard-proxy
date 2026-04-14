@@ -48,6 +48,7 @@ import (
 	"time"
 
 	"github.com/jefflightweb/bitcoin-shard-proxy/config"
+	"github.com/jefflightweb/bitcoin-shard-proxy/forwarder"
 	"github.com/jefflightweb/bitcoin-shard-proxy/metrics"
 	"github.com/jefflightweb/bitcoin-shard-proxy/shard"
 	"github.com/jefflightweb/bitcoin-shard-proxy/worker"
@@ -97,7 +98,8 @@ func main() {
 		"shard_bits", cfg.ShardBits,
 		"num_groups", engine.NumGroups(),
 		"scope", cfg.MCScope,
-		"listen_port", cfg.ListenPort,
+		"udp_listen_port", cfg.UDPListenPort,
+		"tcp_listen_port", cfg.TCPListenPort,
 		"egress_port", cfg.EgressPort,
 		"ifaces", cfg.EgressIfaces,
 		"debug", cfg.Debug,
@@ -105,6 +107,9 @@ func main() {
 		"instance_id", cfg.InstanceID,
 		"version", metrics.Version,
 	)
+
+	// Construct the shared forwarder.
+	fwd := forwarder.New(engine, cfg.EgressPort, cfg.Debug, rec)
 
 	// done is closed to signal all workers to stop their receive loops.
 	done := make(chan struct{})
@@ -114,12 +119,24 @@ func main() {
 	go rec.Serve(cfg.MetricsAddr, done)
 
 	for i := range cfg.NumWorkers {
-		w := worker.New(i, engine, ifaces, cfg.EgressPort, cfg.Debug, rec)
+		w := worker.New(i, fwd, ifaces, rec)
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			if err := w.Run(cfg.ListenAddr, cfg.ListenPort, done); err != nil {
+			if err := w.Run(cfg.ListenAddr, cfg.UDPListenPort, done); err != nil {
 				slog.Error("worker exited with error", "worker", i, "err", err)
+			}
+		}()
+	}
+
+	// Start TCP ingress if configured.
+	if cfg.TCPListenPort > 0 {
+		tcpIngress := worker.NewTCPIngress(fwd, ifaces, rec)
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if err := tcpIngress.Run(cfg.ListenAddr, cfg.TCPListenPort, done); err != nil {
+				slog.Error("TCP ingress exited with error", "err", err)
 			}
 		}()
 	}

@@ -1,40 +1,142 @@
-# Configuration
+# Configuration Reference
 
-## Flags and environment variables
+All parameters are accepted from CLI flags first; environment variables serve
+as fallbacks; hard-coded defaults apply when neither is present.
 
-| Flag             | Env var         | Default  | Description                                             |
-| ---------------- | --------------- | -------- | ------------------------------------------------------- |
-| `-listen`        | `LISTEN_ADDR`   | `[::]`   | Ingress bind address                                    |
-| `-listen-port`   | `LISTEN_PORT`   | `9000`   | UDP port for incoming BSV transaction frames            |
-| `-iface`         | `MULTICAST_IF`  | `eth0`   | NIC names for multicast egress, comma-separated         |
-| `-egress-port`   | `EGRESS_PORT`   | `9001`   | Destination UDP port on multicast group addresses       |
-| `-shard-bits`    | `SHARD_BITS`    | `2`      | Bit width of the shard key (1-24)                       |
-| `-scope`         | `MC_SCOPE`      | `site`   | Multicast scope: `link` / `site` / `org` / `global`     |
-| `-mc-base-addr`  | `MC_BASE_ADDR`  | `""`     | Base IPv6 address for assigned address space            |
-| `-workers`       | `NUM_WORKERS`   | `NumCPU` | Worker goroutine count (0 = runtime.NumCPU)             |
-| `-debug`         | `DEBUG`         | `false`  | Per-packet debug logging + multicast loopback           |
-| `-metrics-addr`  | `METRICS_ADDR`  | `:9100`  | HTTP bind address for `/metrics`, `/healthz`, `/readyz` |
-| `-instance`      | `INSTANCE_ID`   | hostname | OTel `service.instance.id` for federation               |
-| `-otlp-endpoint` | `OTLP_ENDPOINT` | `""`     | OTLP gRPC push endpoint (empty = disabled)              |
-| `-otlp-interval` | `OTLP_INTERVAL` | `30s`    | OTLP push interval                                      |
+## Flags and Environment Variables
 
-## Shard bits vs. group count
+| Flag | Env var | Default | Description |
+|---|---|---|---|
+| `-listen` | `LISTEN_ADDR` | `[::]` | Ingress bind address (without port) |
+| `-udp-listen-port` | `UDP_LISTEN_PORT` | `9000` | UDP listen port for incoming BSV v2 transaction frames |
+| `-tcp-listen-port` | `TCP_LISTEN_PORT` | `0` | TCP ingress port for reliable delivery (0 = disabled) |
+| `-iface` | `MULTICAST_IF` | `eth0` | Comma-separated NIC names for multicast egress |
+| `-egress-port` | `EGRESS_PORT` | `9001` | Destination UDP port for multicast groups |
+| `-shard-bits` | `SHARD_BITS` | `2` | Key bit width (1–24) |
+| `-scope` | `MC_SCOPE` | `site` | Multicast scope: `link` \| `site` \| `org` \| `global` |
+| `-mc-base-addr` | `MC_BASE_ADDR` | `""` | Base IPv6 address for assigned multicast address space (bytes 2–12) |
+| `-workers` | `NUM_WORKERS` | `runtime.NumCPU()` | Worker goroutine count (0 = NumCPU) |
+| `-debug` | `DEBUG` | `false` | Enable per-packet debug logging and multicast loopback |
+| `-metrics-addr` | `METRICS_ADDR` | `:9100` | HTTP bind address for `/metrics`, `/healthz`, `/readyz` |
+| `-instance` | `INSTANCE_ID` | hostname | OTel `service.instance.id` for federation |
+| `-otlp-endpoint` | `OTLP_ENDPOINT` | `""` | OTLP gRPC endpoint (empty = disabled) |
+| `-otlp-interval` | `OTLP_INTERVAL` | `30s` | OTLP push interval |
 
-| `SHARD_BITS` | Groups     | Typical use case                       |
-| ------------ | ---------- | -------------------------------------- |
-| 2            | 4          | Ultra small; testing only              |
-| 4            | 16         | Very small deployment; single switch   |
-| 8            | 256        | Small lab; fits any managed switch     |
-| 12           | 4,096      | Mid-scale; fits most enterprise ASICs  |
-| 24           | 16,777,216 | Maximum precision; large TCAM required |
+---
 
-## Multicast scope
+## Ingress Modes
 
-Use `site` (FF05::/16) for closed subscriber fabrics — MLD joins do not
-cross router boundaries unless inter-domain multicast is explicitly
-configured. Use `global` (FF0E::/16) only if subscribers span BGP domains
-with PIM-SM or MSDP in the path. There are no known global multicast
-deployments on the public internet; only `site` scope should be used currently.
+The proxy supports two ingress transports. Both feed the same forwarding
+pipeline; you may run both simultaneously.
+
+### UDP ingress (default)
+
+UDP ingress uses `SO_REUSEPORT` to distribute incoming datagrams across all
+worker goroutines with no userspace coordination. This is the high-throughput
+path.
+
+```
+-udp-listen-port 9000   # (default)
+```
+
+### TCP ingress (optional)
+
+TCP ingress provides reliable, ordered delivery for senders that require it
+(e.g. over lossy links). Each accepted connection carries a stream of v1 or v2
+frames concatenated end-to-end. The proxy reads 44 bytes first, extends to 84
+bytes if v2, then reads `PayLen` payload bytes.
+
+TCP ingress is disabled by default. Enable it with:
+
+```
+-tcp-listen-port 9100
+```
+
+Both transports can run at the same time:
+
+```
+bitcoin-shard-proxy \
+  -iface eth0 \
+  -udp-listen-port 9000 \
+  -tcp-listen-port 9100
+```
+
+---
+
+## Shard Bits
+
+`-shard-bits N` configures the number of txid prefix bits used to derive the
+multicast group index. The total number of groups is 2^N.
+
+| Bits | Groups | Typical use |
+|---|---|---|
+| 1 | 2 | Minimal / testing |
+| 2 | 4 | Default |
+| 8 | 256 | Medium deployments |
+| 16 | 65 536 | Large deployments |
+| 24 | 16 777 216 | Maximum |
+
+Increasing bits by 1 splits every existing group into two child groups
+(consistent hashing). Subscribers need only join additional groups.
+
+---
+
+## Forwarding
+
+The proxy forwards every frame verbatim (zero-copy `WriteTo`). No field
+modification occurs; `ShardSeqNum` and `SubtreeID` are passed through unchanged
+exactly as the sender set them.
+
+---
+
+## Multicast Scope
+
+| Value | Prefix | Reach |
+|---|---|---|
+| `link` | `FF02` | Same L2 segment only |
+| `site` | `FF05` | Site-local (default; crosses routers within a site) |
+| `org` | `FF08` | Organisation-wide |
+| `global` | `FF0E` | Internet-routable |
+
+---
+
+## Metrics Endpoints
+
+The metrics HTTP server (default `:9100`) exposes:
+
+- **`/metrics`** — Prometheus text format
+- **`/healthz`** — Always `200 OK` if the process is running
+- **`/readyz`** — `200` when all workers are ready; `503` during drain
+
+---
+
+## Example Invocations
+
+### Minimal (single NIC, defaults)
+
+```bash
+bitcoin-shard-proxy -iface eth0
+```
+
+### Multi-NIC, custom shard bits, OTLP
+
+```bash
+bitcoin-shard-proxy \
+  -iface eth0,eth1 \
+  -shard-bits 8 \
+  -udp-listen-port 9000 \
+  -egress-port 9001 \
+  -otlp-endpoint collector:4317
+```
+
+### With TCP ingress
+
+```bash
+bitcoin-shard-proxy \
+  -iface eth0 \
+  -udp-listen-port 9000 \
+  -tcp-listen-port 9100
+```
 
 ## Assigned address space
 
@@ -66,7 +168,7 @@ with no copying and no extra goroutines on the hot path:
   -iface       eth0,eth1 \
   -shard-bits  16        \
   -scope       site      \
-  -listen-port 9000      \
+  -udp-listen-port 9000  \
   -egress-port 9001
 ```
 

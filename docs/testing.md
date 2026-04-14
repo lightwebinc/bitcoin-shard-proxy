@@ -25,7 +25,7 @@ The test passes with exit code 0 (`=== PASS ===`) or fails with 1 (`=== FAIL ===
 | -------------- | ------- | ------------------------------------------ |
 | `SHARD_BITS`   | `2`     | Shard bit width for the test run           |
 | `RECV_COUNT`   | `4`     | Number of frames expected (= 2^SHARD_BITS) |
-| `LISTEN_PORT`  | `9000`  | Proxy ingress port                         |
+| `UDP_LISTEN_PORT` | `9000` | Proxy UDP ingress port                    |
 | `EGRESS_PORT`  | `9001`  | Proxy egress / receiver listen port        |
 | `METRICS_PORT` | `9100`  | Proxy metrics port (Linux assertion)       |
 
@@ -58,7 +58,7 @@ Run each command in a separate terminal. Use `lo` instead of `lo0` on Linux.
 
 ```bash
 ./bitcoin-shard-proxy -iface lo0 -shard-bits 8 -scope link \
-  -listen-port 9000 -egress-port 9001 -debug
+  -udp-listen-port 9000 -egress-port 9001 -debug
 ```
 
 To test multi-interface fan-out on Linux (loopback has only one interface,
@@ -66,7 +66,7 @@ so use the same name twice to exercise the code path):
 
 ```bash
 ./bitcoin-shard-proxy -iface lo,lo -shard-bits 8 -scope link \
-  -listen-port 9000 -egress-port 9001 -debug
+  -udp-listen-port 9000 -egress-port 9001 -debug
 ```
 
 **Terminal 2 — join the first four shard groups:**
@@ -130,7 +130,7 @@ of `shard-bits`.
 ./send-test-frames -addr "[::1]:9000" -shard-bits 2 -count 10 -spread
 
 # Continuous: run indefinitely, cycling through all groups
-./send-test-frames -addr "[fd20::2]:9000' -shard-bits 2 -count 0 -interval 0 -spread
+./send-test-frames -addr "[fd20::2]:9000" -shard-bits 2 -count 0 -interval 0 -spread
 ```
 
 ### Subscriber join examples by shard-bits

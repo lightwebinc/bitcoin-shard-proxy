@@ -51,8 +51,8 @@ func TestLoadDefaults(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	if cfg.ListenPort != 9000 {
-		t.Errorf("ListenPort = %d, want 9000", cfg.ListenPort)
+	if cfg.UDPListenPort != 9000 {
+		t.Errorf("UDPListenPort = %d, want 9000", cfg.UDPListenPort)
 	}
 	if cfg.EgressPort != 9001 {
 		t.Errorf("EgressPort = %d, want 9001", cfg.EgressPort)
@@ -238,6 +238,69 @@ func TestEnvIntInvalid(t *testing.T) {
 	t.Setenv("TEST_ENV_INT_KEY", "not-a-number")
 	if got := envInt("TEST_ENV_INT_KEY", 7); got != 7 {
 		t.Errorf("got %d, want fallback 7", got)
+	}
+}
+
+func TestEnvBoolFallback(t *testing.T) {
+	_ = os.Unsetenv("TEST_ENV_BOOL_KEY")
+	if got := envBool("TEST_ENV_BOOL_KEY", true); !got {
+		t.Error("envBool: expected fallback true")
+	}
+}
+
+func TestEnvBoolSet(t *testing.T) {
+	t.Setenv("TEST_ENV_BOOL_KEY", "true")
+	if got := envBool("TEST_ENV_BOOL_KEY", false); !got {
+		t.Error("envBool: expected true")
+	}
+}
+
+func TestEnvBoolSetFalse(t *testing.T) {
+	t.Setenv("TEST_ENV_BOOL_KEY", "false")
+	if got := envBool("TEST_ENV_BOOL_KEY", true); got {
+		t.Error("envBool: expected false")
+	}
+}
+
+func TestEnvBoolInvalid(t *testing.T) {
+	t.Setenv("TEST_ENV_BOOL_KEY", "not-a-bool")
+	if got := envBool("TEST_ENV_BOOL_KEY", true); !got {
+		t.Error("envBool: expected fallback true for invalid value")
+	}
+}
+
+// ── new v2 flag tests ───────────────────────────────────────────────────────────────
+
+func TestLoadUDPListenPortCustom(t *testing.T) {
+	iface := realIface(t)
+	cfg, err := parseArgs(t, []string{"-iface", iface, "-udp-listen-port", "9500"})
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.UDPListenPort != 9500 {
+		t.Errorf("UDPListenPort = %d, want 9500", cfg.UDPListenPort)
+	}
+}
+
+func TestLoadTCPListenPort(t *testing.T) {
+	iface := realIface(t)
+	cfg, err := parseArgs(t, []string{"-iface", iface, "-tcp-listen-port", "9100"})
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.TCPListenPort != 9100 {
+		t.Errorf("TCPListenPort = %d, want 9100", cfg.TCPListenPort)
+	}
+}
+
+func TestLoadTCPListenPortDefault(t *testing.T) {
+	iface := realIface(t)
+	cfg, err := parseArgs(t, []string{"-iface", iface})
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.TCPListenPort != 0 {
+		t.Errorf("TCPListenPort = %d, want 0 (disabled)", cfg.TCPListenPort)
 	}
 }
 

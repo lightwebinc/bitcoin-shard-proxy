@@ -3,7 +3,7 @@ set -e
 
 SHARD_BITS=${SHARD_BITS:-2}
 RECV_COUNT=${RECV_COUNT:-4}
-LISTEN_PORT=${LISTEN_PORT:-9000}
+UDP_LISTEN_PORT=${UDP_LISTEN_PORT:-9000}
 EGRESS_PORT=${EGRESS_PORT:-9001}
 METRICS_PORT=${METRICS_PORT:-9100}
 
@@ -39,7 +39,7 @@ bitcoin-shard-proxy \
     -iface "$LOOPBACK" \
     -scope link \
     -shard-bits "$SHARD_BITS" \
-    -listen-port "$LISTEN_PORT" \
+    -udp-listen-port "$UDP_LISTEN_PORT" \
     -egress-port "$EGRESS_PORT" \
     -metrics-addr ":$METRICS_PORT" \
     -debug &
@@ -61,7 +61,7 @@ sleep 1
 
 # Send exactly one frame per shard group
 send-test-frames \
-    -addr "[::1]:$LISTEN_PORT" \
+    -addr "[::1]:$UDP_LISTEN_PORT" \
     -shard-bits "$SHARD_BITS" \
     -spread \
     -interval 100

@@ -3,43 +3,48 @@ package worker
 import (
 	"errors"
 	"fmt"
-	"log/slog"
+	"io"
 	"net"
 	"syscall"
 	"testing"
+	"time"
 
+	"github.com/jefflightweb/bitcoin-shard-proxy/forwarder"
+	"github.com/jefflightweb/bitcoin-shard-proxy/frame"
 	"github.com/jefflightweb/bitcoin-shard-proxy/shard"
 )
 
 // ── New ───────────────────────────────────────────────────────────────────────
 
-func TestNew(t *testing.T) {
+func makeTestForwarder() *forwarder.Forwarder {
 	engine := shard.New(0xFF05, [11]byte{}, 8)
+	return forwarder.New(engine, 9001, false, nil)
+}
+
+func TestNew(t *testing.T) {
+	fwd := makeTestForwarder()
 	ifaces := []*net.Interface{{Index: 1, Name: "lo"}}
-	w := New(0, engine, ifaces, 9001, false, nil)
+	w := New(0, fwd, ifaces, nil)
 	if w == nil {
 		t.Fatal("New returned nil")
 	}
 	if w.id != 0 {
 		t.Errorf("id = %d, want 0", w.id)
 	}
-	if w.port != 9001 {
-		t.Errorf("port = %d, want 9001", w.port)
-	}
-	if w.debug {
-		t.Error("debug should be false")
+	if w.fwd == nil {
+		t.Error("fwd should not be nil")
 	}
 	if w.log == nil {
 		t.Error("log should not be nil")
 	}
 }
 
-func TestNewDebugMode(t *testing.T) {
-	engine := shard.New(0xFF05, [11]byte{}, 8)
+func TestNewNilRec(t *testing.T) {
+	fwd := makeTestForwarder()
 	ifaces := []*net.Interface{{Index: 1, Name: "lo"}}
-	w := New(1, engine, ifaces, 9001, true, nil)
-	if !w.debug {
-		t.Error("debug should be true")
+	w := New(1, fwd, ifaces, nil)
+	if w.rec != nil {
+		t.Error("rec should be nil when not provided")
 	}
 }
 
@@ -137,118 +142,152 @@ func TestUnwrapChain(t *testing.T) {
 	}
 }
 
-// ── process ───────────────────────────────────────────────────────────────────
+// ── NewTCPIngress ─────────────────────────────────────────────────────────────
 
-// fakeAddr implements net.Addr for use as a dummy source address.
-type fakeAddr struct{}
-
-func (fakeAddr) Network() string { return "udp6" }
-func (fakeAddr) String() string  { return "[::1]:12345" }
-
-// openLoopbackUDP opens a connected UDP socket to loopback and returns the
-// conn along with its bound address. Skips the test if no loopback is usable.
-func openLoopbackUDP(t *testing.T) (*net.UDPConn, *net.UDPAddr) {
-	t.Helper()
-	addr, err := net.ResolveUDPAddr("udp6", "[::1]:0")
-	if err != nil {
-		t.Skipf("udp6 loopback not available: %v", err)
-	}
-	conn, err := net.ListenUDP("udp6", addr)
-	if err != nil {
-		t.Skipf("ListenUDP loopback: %v", err)
-	}
-	t.Cleanup(func() { _ = conn.Close() })
-	return conn, conn.LocalAddr().(*net.UDPAddr)
-}
-
-func makeWorker(t *testing.T, debug bool) *Worker {
-	t.Helper()
-	engine := shard.New(0xFF05, [11]byte{}, 8)
+func TestNewTCPIngress(t *testing.T) {
+	fwd := makeTestForwarder()
 	ifaces := []*net.Interface{{Index: 1, Name: "lo"}}
-	return New(0, engine, ifaces, 9001, debug, nil)
-}
-
-func makeTargets(t *testing.T, conns ...*net.UDPConn) []egressTarget {
-	t.Helper()
-	tgts := make([]egressTarget, len(conns))
-	for i, c := range conns {
-		tgts[i] = egressTarget{iface: &net.Interface{Index: i + 1, Name: fmt.Sprintf("lo%d", i)}, conn: c}
+	ti := NewTCPIngress(fwd, ifaces, nil)
+	if ti == nil {
+		t.Fatal("NewTCPIngress returned nil")
 	}
-	return tgts
+	if ti.fwd == nil {
+		t.Error("fwd should not be nil")
+	}
+	if ti.log == nil {
+		t.Error("log should not be nil")
+	}
 }
 
-func validFrame(t *testing.T) []byte {
+// ── handleConn ────────────────────────────────────────────────────────────────
+
+// dialHandleConn opens a TCP loopback connection, runs handleConn in a
+// goroutine, calls write() to populate the server side, then waits for
+// handleConn to return (with a short timeout to prevent hangs).
+func dialHandleConn(t *testing.T, write func(net.Conn)) {
 	t.Helper()
-	// Manually build a minimal valid BSV frame header + empty payload.
-	// Magic: 0xE3E1F3E8, ProtoVer: 0x02BF, FrameVer: 0x01, Reserved: 0x00
-	// TxID: 32 zero bytes, PayloadLen: 0x00000000
-	buf := make([]byte, 44)
+	ln, err := net.Listen("tcp6", "[::1]:0")
+	if err != nil {
+		t.Skipf("TCP loopback unavailable: %v", err)
+	}
+	defer func() { _ = ln.Close() }()
+
+	clientConn, err := net.Dial("tcp6", ln.Addr().String())
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+
+	serverConn, err := ln.Accept()
+	if err != nil {
+		t.Fatalf("accept: %v", err)
+	}
+
+	fwd := makeTestForwarder()
+	ifaces := []*net.Interface{{Index: 1, Name: "lo"}}
+	ti := NewTCPIngress(fwd, ifaces, nil)
+
+	done := make(chan struct{})
+	go func() {
+		ti.handleConn(serverConn, nil)
+		close(done)
+	}()
+
+	write(clientConn)
+	_ = clientConn.Close()
+
+	select {
+	case <-done:
+	case <-time.After(3 * time.Second):
+		t.Error("handleConn did not return within timeout")
+	}
+}
+
+func buildTCPFrame(t *testing.T, txidByte byte, seq uint64, payload []byte) []byte {
+	t.Helper()
+	f := &frame.Frame{ShardSeqNum: seq, Payload: payload}
+	f.TxID[0] = txidByte
+	buf := make([]byte, frame.HeaderSize+len(payload))
+	n, err := frame.Encode(f, buf)
+	if err != nil {
+		t.Fatalf("frame.Encode: %v", err)
+	}
+	return buf[:n]
+}
+
+func TestHandleConnValidFrame(t *testing.T) {
+	raw := buildTCPFrame(t, 0xAB, 1, []byte("hello"))
+	dialHandleConn(t, func(conn net.Conn) {
+		_, _ = conn.Write(raw)
+	})
+}
+
+func TestHandleConnEmptyConn(t *testing.T) {
+	dialHandleConn(t, func(_ net.Conn) {
+		// write nothing — immediate EOF in handleConn
+	})
+}
+
+func TestHandleConnTruncatedHeader(t *testing.T) {
+	dialHandleConn(t, func(conn net.Conn) {
+		_, _ = conn.Write([]byte{0xE3, 0xE1, 0xF3}) // only 3 bytes
+	})
+}
+
+func TestHandleConnBadMagic(t *testing.T) {
+	hdr := make([]byte, frame.HeaderSize)
+	hdr[0] = 0x00 // bad magic — all zeros
+	dialHandleConn(t, func(conn net.Conn) {
+		_, _ = conn.Write(hdr)
+	})
+}
+
+func buildV1TCPFrame(t *testing.T, txidByte byte, payload []byte) []byte {
+	t.Helper()
+	buf := make([]byte, frame.HeaderSizeV1+len(payload))
+	// Magic
 	buf[0], buf[1], buf[2], buf[3] = 0xE3, 0xE1, 0xF3, 0xE8
+	// ProtoVer
 	buf[4], buf[5] = 0x02, 0xBF
-	buf[6] = 0x01
+	// FrameVer v1
+	buf[6] = frame.FrameVerV1
+	// TxID[0]
+	buf[8] = txidByte
+	// PayLen at @40
+	buf[40] = byte(len(payload) >> 24)
+	buf[41] = byte(len(payload) >> 16)
+	buf[42] = byte(len(payload) >> 8)
+	buf[43] = byte(len(payload))
+	copy(buf[44:], payload)
 	return buf
 }
 
-func TestProcessValidFrame(t *testing.T) {
-	egress, _ := openLoopbackUDP(t)
-	w := makeWorker(t, false)
-	raw := validFrame(t)
-	// process writes to egress; with a zero TxID the group index is 0 and the
-	// destination is a multicast addr that won't be reachable on loopback, but
-	// WriteTo is expected to fail gracefully — no panic.
-	w.process(makeTargets(t, egress), raw, fakeAddr{})
+func TestHandleConnV1Frame(t *testing.T) {
+	raw := buildV1TCPFrame(t, 0xAB, []byte("v1-payload"))
+	dialHandleConn(t, func(conn net.Conn) {
+		_, _ = conn.Write(raw)
+	})
 }
 
-func TestProcessValidFrameDebug(t *testing.T) {
-	egress, _ := openLoopbackUDP(t)
-	w := makeWorker(t, true)
-	raw := validFrame(t)
-	w.process(makeTargets(t, egress), raw, fakeAddr{})
+func TestHandleConnMultipleFrames(t *testing.T) {
+	raw1 := buildTCPFrame(t, 0xAB, 1, nil)
+	raw2 := buildTCPFrame(t, 0xCD, 2, []byte("world"))
+	dialHandleConn(t, func(conn net.Conn) {
+		_, _ = io.MultiWriter(conn).Write(append(raw1, raw2...))
+	})
 }
 
-func TestProcessInvalidFrame(t *testing.T) {
-	egress, _ := openLoopbackUDP(t)
-	w := makeWorker(t, false)
-	// A buffer shorter than HeaderSize triggers ErrTooShort in frame.Decode.
-	w.process(makeTargets(t, egress), []byte{0x00, 0x01}, fakeAddr{})
-}
-
-func TestProcessBadMagic(t *testing.T) {
-	egress, _ := openLoopbackUDP(t)
-	w := makeWorker(t, false)
-	raw := make([]byte, 44) // all zeros — bad magic
-	w.process(makeTargets(t, egress), raw, fakeAddr{})
-}
-
-// ── probeEgressSocket ────────────────────────────────────────────────────────
-
-func TestProbeEgressSocketLoopback(t *testing.T) {
-	conn, _ := openLoopbackUDP(t)
-	iface := &net.Interface{Index: 1, Name: "lo"}
-	// On loopback with a real UDP socket the probe should either succeed or
-	// return a soft error (non-fatal). It must never return a hard error that
-	// would prevent startup on a properly configured host.
-	if err := probeEgressSocket(slog.Default(), conn, iface); err != nil {
-		t.Errorf("probeEgressSocket on loopback: unexpected hard error: %v", err)
-	}
-}
-
-func TestProbeEgressSocketClosedConn(t *testing.T) {
-	conn, _ := openLoopbackUDP(t)
-	iface := &net.Interface{Index: 1, Name: "lo"}
-	// Closing the conn before probing should not produce a hard-error return
-	// (EBADF is treated as soft).
-	_ = conn.Close()
-	// Should not panic; soft or hard is acceptable but must not crash.
-	_ = probeEgressSocket(slog.Default(), conn, iface)
-}
-
-func TestProcessMultipleTargets(t *testing.T) {
-	egress1, _ := openLoopbackUDP(t)
-	egress2, _ := openLoopbackUDP(t)
-	w := makeWorker(t, false)
-	raw := validFrame(t)
-	// Fan-out to two targets; both writes may fail gracefully on loopback
-	// multicast — no panic, no hang.
-	w.process(makeTargets(t, egress1, egress2), raw, fakeAddr{})
+func TestHandleConnPayloadTooLarge(t *testing.T) {
+	hdr := make([]byte, frame.HeaderSize)
+	hdr[0], hdr[1], hdr[2], hdr[3] = 0xE3, 0xE1, 0xF3, 0xE8
+	hdr[4], hdr[5] = 0x02, 0xBF
+	hdr[6] = frame.FrameVerV2
+	// PayLen at bytes 80-83: set to MaxPayload + 1
+	oversize := uint32(frame.MaxPayload + 1)
+	hdr[80] = byte(oversize >> 24)
+	hdr[81] = byte(oversize >> 16)
+	hdr[82] = byte(oversize >> 8)
+	hdr[83] = byte(oversize)
+	dialHandleConn(t, func(conn net.Conn) {
+		_, _ = conn.Write(hdr)
+	})
 }

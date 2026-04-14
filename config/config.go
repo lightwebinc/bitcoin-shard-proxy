@@ -6,18 +6,19 @@
 // # Environment variable mapping
 //
 //	Flag             Env var          Default       Description
-//	-listen          LISTEN_ADDR      [::]          Ingress bind address
-//	-listen-port     LISTEN_PORT      9000          UDP listen port
-//	-iface           MULTICAST_IF     eth0          Comma-separated NICs for multicast egress
-//	-egress-port     EGRESS_PORT      9001          Destination port on groups
-//	-shard-bits      SHARD_BITS       2             Key bit width (1–24)
-//	-scope           MC_SCOPE         site          Multicast scope
-//	-workers         NUM_WORKERS      runtime.NumCPU  Worker goroutine count
-//	-debug           DEBUG            false         Per-packet logging + loopback
-//	-metrics-addr    METRICS_ADDR     :9100         HTTP bind for /metrics, /healthz, /readyz
-//	-instance        INSTANCE_ID      hostname      OTel service.instance.id
-//	-otlp-endpoint   OTLP_ENDPOINT    ""            OTLP gRPC endpoint (empty = disabled)
-//	-otlp-interval   OTLP_INTERVAL    30s           OTLP push interval
+//	-listen               LISTEN_ADDR           [::]      Ingress bind address
+//	-udp-listen-port      UDP_LISTEN_PORT       9000      UDP listen port
+//	-tcp-listen-port      TCP_LISTEN_PORT       0         TCP ingress port (0 = disabled)
+//	-iface                MULTICAST_IF          eth0      Comma-separated NICs for multicast egress
+//	-egress-port          EGRESS_PORT           9001      Destination port on groups
+//	-shard-bits           SHARD_BITS            2         Key bit width (1–24)
+//	-scope                MC_SCOPE              site      Multicast scope
+//	-workers              NUM_WORKERS           NumCPU    Worker goroutine count
+//	-debug                DEBUG                 false     Per-packet logging + loopback
+//	-metrics-addr         METRICS_ADDR          :9100     HTTP bind for /metrics, /healthz, /readyz
+//	-instance             INSTANCE_ID           hostname  OTel service.instance.id
+//	-otlp-endpoint        OTLP_ENDPOINT         ""        OTLP gRPC endpoint (empty = disabled)
+//	-otlp-interval        OTLP_INTERVAL         30s       OTLP push interval
 package config
 
 import (
@@ -49,10 +50,11 @@ var Scopes = map[string]uint16{
 // after [Load] returns; treat the value as immutable.
 type Config struct {
 	// Network
-	ListenAddr   string   // e.g. "[::]"
-	ListenPort   int      // UDP port to receive BSV transaction frames
-	EgressIfaces []string // NIC names for multicast egress, e.g. ["eth0", "eth1"]
-	EgressPort   int      // Destination UDP port written into outgoing multicast datagrams
+	ListenAddr    string   // e.g. "[::]"
+	UDPListenPort int      // UDP port to receive BSV v2 transaction frames
+	TCPListenPort int      // TCP ingress port; 0 = disabled
+	EgressIfaces  []string // NIC names for multicast egress, e.g. ["eth0", "eth1"]
+	EgressPort    int      // Destination UDP port written into outgoing multicast datagrams
 
 	// Sharding
 	ShardBits     uint     // Number of txid prefix bits used as the group key (1–24)
@@ -84,8 +86,10 @@ func Load() (*Config, error) {
 
 	flag.StringVar(&c.ListenAddr, "listen", envStr("LISTEN_ADDR", "[::]"),
 		"ingress bind address (without port)")
-	flag.IntVar(&c.ListenPort, "listen-port", envInt("LISTEN_PORT", 9000),
-		"UDP listen port for incoming BSV transaction frames")
+	flag.IntVar(&c.UDPListenPort, "udp-listen-port", envInt("UDP_LISTEN_PORT", 9000),
+		"UDP listen port for incoming BSV v2 transaction frames")
+	flag.IntVar(&c.TCPListenPort, "tcp-listen-port", envInt("TCP_LISTEN_PORT", 0),
+		"TCP ingress port for reliable frame delivery (0 = disabled)")
 	ifaceFlag := flag.String("iface", envStr("MULTICAST_IF", "eth0"),
 		"comma-separated NIC names for multicast egress (e.g. eth0,eth1)")
 	flag.IntVar(&c.EgressPort, "egress-port", envInt("EGRESS_PORT", 9001),

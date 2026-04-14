@@ -16,13 +16,17 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY --from=builder /bitcoin-shard-proxy /usr/local/bin/bitcoin-shard-proxy
 
 ENV LISTEN_ADDR="[::]" \
-    LISTEN_PORT="9000" \
+    UDP_LISTEN_PORT="9000" \
+    TCP_LISTEN_PORT="0" \
     MULTICAST_IF="eth0" \
     EGRESS_PORT="9001" \
     SHARD_BITS="2" \
     MC_SCOPE="site" \
     MC_BASE_ADDR="" \
     NUM_WORKERS="" \
+    PROXY_SEQ="true" \
+    STATIC_SUBTREE_ID="" \
+    STATIC_SUBTREE_HEIGHT="" \
     METRICS_ADDR=":9100" \
     INSTANCE_ID="" \
     OTLP_ENDPOINT="" \
