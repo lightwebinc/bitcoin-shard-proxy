@@ -23,6 +23,7 @@ import (
 	"io"
 	"log/slog"
 	"net"
+	"sync"
 
 	"github.com/jefflightweb/bitcoin-shard-proxy/forwarder"
 	"github.com/jefflightweb/bitcoin-shard-proxy/frame"
@@ -76,6 +77,9 @@ func (ti *TCPIngress) Run(listenAddr string, listenPort int, done <-chan struct{
 	}
 	defer forwarder.CloseTargets(targets, ti.log)
 
+	var connWG sync.WaitGroup
+	defer connWG.Wait()
+
 	for {
 		conn, err := ln.Accept()
 		if err != nil {
@@ -85,7 +89,15 @@ func (ti *TCPIngress) Run(listenAddr string, listenPort int, done <-chan struct{
 			ti.log.Warn("Accept error", "err", err)
 			continue
 		}
-		go ti.handleConn(conn, targets)
+		connWG.Add(1)
+		go func() {
+			defer connWG.Done()
+			go func() {
+				<-done
+				_ = conn.Close()
+			}()
+			ti.handleConn(conn, targets)
+		}()
 	}
 }
 
