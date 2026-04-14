@@ -93,10 +93,18 @@ No re-encoding, no field modification, no per-worker encode buffer.
 
 ## Graceful Shutdown
 
-`SIGINT` or `SIGTERM` closes the `done` channel. Each worker closes its ingress
-socket, which unblocks the `ReadFrom` call and returns. The TCP listener's
-`Accept` is also unblocked by closing the listener. `main` waits for all
-goroutines with `sync.WaitGroup`.
+Shutdown proceeds in two phases when `SIGINT` or `SIGTERM` is received:
+
+1. **Drain** — `rec.SetDraining()` is called immediately, flipping `/readyz`
+   to `503` so load balancers stop routing new connections. If `-drain-timeout`
+   is non-zero, the process sleeps for that duration while workers continue
+   forwarding in-flight packets.
+
+2. **Quiesce** — The `done` channel is closed. Each UDP worker and the TCP
+   listener close their ingress sockets, unblocking any pending `ReadFrom` /
+   `Accept` calls. Active TCP connections are force-closed so `handleConn`
+   goroutines do not hang. `main` waits for all goroutines via
+   `sync.WaitGroup`, then flushes the OTLP exporter before returning.
 
 ## Package Structure
 

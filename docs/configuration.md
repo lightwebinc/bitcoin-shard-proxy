@@ -17,6 +17,7 @@ as fallbacks; hard-coded defaults apply when neither is present.
 | `-mc-base-addr` | `MC_BASE_ADDR` | `""` | Base IPv6 address for assigned multicast address space (bytes 2–12) |
 | `-workers` | `NUM_WORKERS` | `runtime.NumCPU()` | Worker goroutine count (0 = NumCPU) |
 | `-debug` | `DEBUG` | `false` | Enable per-packet debug logging and multicast loopback |
+| `-drain-timeout` | `DRAIN_TIMEOUT` | `0s` | Pre-drain delay before closing sockets; `/readyz` returns 503 during this window (`0s` = disabled) |
 | `-metrics-addr` | `METRICS_ADDR` | `:9100` | HTTP bind address for `/metrics`, `/healthz`, `/readyz` |
 | `-instance` | `INSTANCE_ID` | hostname | OTel `service.instance.id` for federation |
 | `-otlp-endpoint` | `OTLP_ENDPOINT` | `""` | OTLP gRPC endpoint (empty = disabled) |
@@ -106,7 +107,27 @@ The metrics HTTP server (default `:9100`) exposes:
 
 - **`/metrics`** — Prometheus text format
 - **`/healthz`** — Always `200 OK` if the process is running
-- **`/readyz`** — `200` when all workers are ready; `503` during drain
+- **`/readyz`** — `200` when all workers are ready; `503` while starting or draining
+
+---
+
+## Graceful Drain
+
+When a shutdown signal is received the proxy performs a two-phase shutdown:
+
+1. **Drain phase** — `/readyz` immediately returns `503` (status `"draining"`), signalling the load balancer to stop routing new connections. The process sleeps for `-drain-timeout`. Workers continue forwarding in-flight packets during this window.
+2. **Quiesce phase** — The ingress socket is closed, each worker exits its receive loop, and the process waits for all goroutines to finish before exiting.
+
+Setting `-drain-timeout 0s` (the default) skips the sleep and closes sockets immediately after marking draining — suitable for single-node or development deployments.
+
+For production with a load balancer or BGP AnyCast, set `-drain-timeout` to at least the LB health-check interval plus one check period:
+
+```bash
+# LB health-check every 5 s — allow two missed checks before closing
+bitcoin-shard-proxy -iface eth0 -drain-timeout 15s
+```
+
+> **`TimeoutStopSec` note:** systemd will send `SIGKILL` after `TimeoutStopSec` if the process has not exited. Ensure `TimeoutStopSec > drain-timeout + 15s` (OTLP flush + worker drain buffer). The default service unit sets `TimeoutStopSec=30`.
 
 ---
 
@@ -136,6 +157,15 @@ bitcoin-shard-proxy \
   -iface eth0 \
   -udp-listen-port 9000 \
   -tcp-listen-port 9100
+```
+
+### With graceful drain (behind a load balancer)
+
+```bash
+bitcoin-shard-proxy \
+  -iface eth0 \
+  -udp-listen-port 9000 \
+  -drain-timeout 15s
 ```
 
 ## Assigned address space

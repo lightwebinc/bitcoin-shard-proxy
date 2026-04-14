@@ -33,8 +33,15 @@
 // # Graceful shutdown
 //
 // The proxy catches SIGINT (Ctrl-C) and SIGTERM (sent by systemd, container
-// orchestrators, etc.). On receipt it logs the signal, closes the done
-// channel, and waits for all workers to drain before exiting.
+// orchestrators, etc.). Shutdown proceeds in two phases:
+//
+//  1. Draining: /readyz immediately returns 503, then the process sleeps
+//     -drain-timeout (DRAIN_TIMEOUT) to allow load-balancer health checks to
+//     propagate and stop sending new connections. Defaults to 0 (disabled).
+//
+//  2. Quiescing: the done channel is closed, each worker's ingress socket is
+//     closed (unblocking ReadFrom), and main waits for all goroutines to exit
+//     before the process returns.
 package main
 
 import (
@@ -162,13 +169,25 @@ func main() {
 
 	received := <-sig // block until SIGINT or SIGTERM
 
-	slog.Info("received signal, shutting down",
+	slog.Info("received signal, starting drain",
 		"signal", received,
 		"signal_number", int(received.(syscall.Signal)),
+		"drain_timeout", cfg.DrainTimeout,
 	)
 
-	// Close done to unblock all worker receive loops and the metrics server,
-	// then flush any pending OTLP exports before waiting for workers to drain.
+	// Phase 1: mark draining so /readyz returns 503 immediately, then wait for
+	// the load balancer's health-check interval to propagate before we close
+	// any sockets. Workers continue processing in-flight packets during this
+	// window. If DrainTimeout is 0 the sleep is skipped.
+	rec.SetDraining()
+	if cfg.DrainTimeout > 0 {
+		time.Sleep(cfg.DrainTimeout)
+	}
+
+	// Phase 2: close done to unblock all worker receive loops and the metrics
+	// server, then flush any pending OTLP exports before waiting for all
+	// goroutines to exit.
+	slog.Info("drain complete, closing ingress sockets")
 	close(done)
 	shutStart := time.Now()
 

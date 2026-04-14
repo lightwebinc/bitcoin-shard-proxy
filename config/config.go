@@ -16,6 +16,7 @@
 //	-workers              NUM_WORKERS           NumCPU    Worker goroutine count
 //	-debug                DEBUG                 false     Per-packet logging + loopback
 //	-metrics-addr         METRICS_ADDR          :9100     HTTP bind for /metrics, /healthz, /readyz
+//	-drain-timeout        DRAIN_TIMEOUT         0s        Pre-drain delay before closing sockets (0 = disabled)
 //	-instance             INSTANCE_ID           hostname  OTel service.instance.id
 //	-otlp-endpoint        OTLP_ENDPOINT         ""        OTLP gRPC endpoint (empty = disabled)
 //	-otlp-interval        OTLP_INTERVAL         30s       OTLP push interval
@@ -65,8 +66,9 @@ type Config struct {
 	MCMiddleBytes [11]byte // Derived from MCBaseAddr — bytes 2-12 of multicast address
 
 	// Runtime
-	NumWorkers int  // Worker goroutine count; defaults to runtime.NumCPU()
-	Debug      bool // Enables per-packet debug logging and multicast loopback
+	NumWorkers   int           // Worker goroutine count; defaults to runtime.NumCPU()
+	Debug        bool          // Enables per-packet debug logging and multicast loopback
+	DrainTimeout time.Duration // Pre-drain delay before closing ingress sockets; 0 = disabled
 
 	// Observability
 	MetricsAddr  string        // HTTP bind address for /metrics, /healthz, /readyz
@@ -102,6 +104,8 @@ func Load() (*Config, error) {
 		"base IPv6 address for assigned multicast address space (bytes 2-12)")
 	flag.BoolVar(&c.Debug, "debug", envBool("DEBUG", false),
 		"enable per-packet debug logging and multicast loopback (single-host testing)")
+	flag.DurationVar(&c.DrainTimeout, "drain-timeout", envDuration("DRAIN_TIMEOUT", 0),
+		"pre-drain delay before closing ingress sockets; /readyz returns 503 during this window (0 = disabled)")
 	flag.StringVar(&c.MetricsAddr, "metrics-addr", envStr("METRICS_ADDR", ":9100"),
 		"HTTP bind address for /metrics, /healthz, /readyz")
 	flag.StringVar(&c.InstanceID, "instance", envStr("INSTANCE_ID", ""),

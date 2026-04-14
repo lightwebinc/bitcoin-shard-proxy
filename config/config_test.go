@@ -324,3 +324,25 @@ func TestEnvDurationInvalid(t *testing.T) {
 		t.Errorf("got %v, want fallback 5s", got)
 	}
 }
+
+func TestLoadDrainTimeoutDefault(t *testing.T) {
+	iface := realIface(t)
+	cfg, err := parseArgs(t, []string{"-iface", iface})
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.DrainTimeout != 0 {
+		t.Errorf("DrainTimeout = %v, want 0 (disabled)", cfg.DrainTimeout)
+	}
+}
+
+func TestLoadDrainTimeoutFlag(t *testing.T) {
+	iface := realIface(t)
+	cfg, err := parseArgs(t, []string{"-iface", iface, "-drain-timeout", "15s"})
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.DrainTimeout != 15*time.Second {
+		t.Errorf("DrainTimeout = %v, want 15s", cfg.DrainTimeout)
+	}
+}

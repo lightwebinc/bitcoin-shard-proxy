@@ -99,6 +99,11 @@ type Recorder struct {
 	// Per-(iface, group) MeasurementOption cache
 	attrCache sync.Map
 
+	// draining is set to true when a shutdown signal has been received and the
+	// proxy is waiting for the load-balancer to stop routing new connections.
+	// While true, /readyz returns 503 regardless of worker count.
+	draining atomic.Bool
+
 	// Composed shutdown function (OTLP exporter + MeterProvider)
 	shutdownFn func(context.Context) error
 }
@@ -337,6 +342,14 @@ func (r *Recorder) WorkerDone() {
 	r.readyCount.Add(-1)
 }
 
+// SetDraining marks the recorder as draining. Once called, /readyz returns
+// 503 regardless of how many workers are ready. Call this before sleeping the
+// drain period so the load balancer stops routing new connections before the
+// ingress socket closes.
+func (r *Recorder) SetDraining() {
+	r.draining.Store(true)
+}
+
 // Shutdown flushes all pending OTLP exports and releases SDK resources.
 // Call once during graceful shutdown before wg.Wait().
 func (r *Recorder) Shutdown(ctx context.Context) {
@@ -429,6 +442,11 @@ func (r *Recorder) handleReadyz(w http.ResponseWriter, _ *http.Request) {
 	ready := int(r.readyCount.Load())
 	total := r.numWorkers
 	w.Header().Set("Content-Type", "application/json")
+	if r.draining.Load() {
+		w.WriteHeader(http.StatusServiceUnavailable)
+		_, _ = fmt.Fprintf(w, `{"status":"draining","workers_ready":%d,"workers_total":%d}`, ready, total)
+		return
+	}
 	if ready >= total && total > 0 {
 		w.WriteHeader(http.StatusOK)
 		_, _ = fmt.Fprintf(w, `{"status":"ready","workers_ready":%d,"workers_total":%d}`, ready, total)

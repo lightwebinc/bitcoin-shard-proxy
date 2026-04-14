@@ -187,6 +187,28 @@ func TestHandleReadyzNotReady(t *testing.T) {
 	}
 }
 
+func TestHandleReadyzDraining(t *testing.T) {
+	rec := newTestRecorder(t, 2)
+	rec.WorkerReady()
+	rec.WorkerReady()
+	rec.SetDraining()
+
+	req := httptest.NewRequest(http.MethodGet, "/readyz", nil)
+	w := httptest.NewRecorder()
+	rec.handleReadyz(w, req)
+
+	if w.Code != http.StatusServiceUnavailable {
+		t.Errorf("status = %d, want %d (draining)", w.Code, http.StatusServiceUnavailable)
+	}
+	var body map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+		t.Fatalf("body not valid JSON: %v", err)
+	}
+	if body["status"] != "draining" {
+		t.Errorf("status field = %v, want draining", body["status"])
+	}
+}
+
 func TestHandleReadyzReady(t *testing.T) {
 	rec := newTestRecorder(t, 2)
 	rec.WorkerReady()
