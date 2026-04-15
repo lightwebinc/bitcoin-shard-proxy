@@ -4,8 +4,7 @@
 
 A high-throughput proxy that receives Bitcoin SV (BSV Blockchain) v2 transaction
 frames over UDP (or TCP for reliable delivery), derives an IPv6 multicast group
-address from the transaction ID, and retransmits each datagram verbatim to
-subscribers of the corresponding group.
+address from the transaction ID, and retransmits to subscribers of the corresponding group. Further traffic segmentation is provided via subtree-level sharding. Reliable delivery to multicast receivers is supported via monotonic transmission flow sequencing.
 
 Inspiration: [Multicast within Multicast: Anycast](https://singulargrit.substack.com/p/multicast-within-multicast-anycast), [Multicast as the Only Viable Architecture](https://singulargrit.substack.com/p/multicast-as-the-only-viable-architecture)
 

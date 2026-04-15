@@ -19,6 +19,8 @@
 - [x] Subtree sharding cross-linking fields in v2 frame header
 - [x] TCP ingress for reliable ingress delivery (`-tcp-listen-port`)
 - [x] Configurable pre-drain period for load-balancer-safe rolling restarts (`-drain-timeout`)
+- [ ] Sequence number generation (either external, or internal, or both)
 - [ ] NACK / gap-detection protocol over CDN
 - [ ] FEC (forward error correction) option for lossy links
 - [ ] Shard manifest protocol (publish current shard map to subscribers)
+- [ ] Add support for base control group frames (subtree, headers, manifests, etc.)
