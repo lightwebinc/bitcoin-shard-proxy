@@ -27,8 +27,8 @@ import (
 
 	"golang.org/x/sys/unix"
 
-	"github.com/jefflightweb/bitcoin-shard-proxy/forwarder"
-	"github.com/jefflightweb/bitcoin-shard-proxy/metrics"
+	"github.com/lightwebinc/bitcoin-shard-proxy/forwarder"
+	"github.com/lightwebinc/bitcoin-shard-proxy/metrics"
 )
 
 const (

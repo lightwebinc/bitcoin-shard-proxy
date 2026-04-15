@@ -1,4 +1,4 @@
-module github.com/jefflightweb/bitcoin-shard-proxy
+module github.com/lightwebinc/bitcoin-shard-proxy
 
 go 1.25.9
 

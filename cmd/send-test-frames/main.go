@@ -20,8 +20,8 @@ import (
 	"net"
 	"time"
 
-	"github.com/jefflightweb/bitcoin-shard-proxy/frame"
-	"github.com/jefflightweb/bitcoin-shard-proxy/shard"
+	"github.com/lightwebinc/bitcoin-shard-proxy/frame"
+	"github.com/lightwebinc/bitcoin-shard-proxy/shard"
 )
 
 func main() {

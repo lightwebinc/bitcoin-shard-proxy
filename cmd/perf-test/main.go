@@ -34,7 +34,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/jefflightweb/bitcoin-shard-proxy/frame"
+	"github.com/lightwebinc/bitcoin-shard-proxy/frame"
 )
 
 // ---------------------------------------------------------------------------
@@ -52,6 +52,7 @@ type config struct {
 	LXD        bool
 	Receivers  []string
 	Output     string
+	Senders    int
 }
 
 func parseFlags() *config {
@@ -66,6 +67,7 @@ func parseFlags() *config {
 	flag.BoolVar(&c.LXD, "lxd", false, "enable lxc exec for interface stats, tcpdump, recv-test-frames collection")
 	recvFlag := flag.String("receivers", "recv1,recv2,recv3", "comma-separated receiver VM names")
 	flag.StringVar(&c.Output, "output", "report.md", "output report file path")
+	flag.IntVar(&c.Senders, "senders", 1, "number of concurrent sender goroutines (each targets pps/senders)")
 	flag.Parse()
 
 	c.ShardBits = *bits
@@ -419,10 +421,10 @@ type sendResult struct {
 	Mbps       float64
 }
 
-func sendFrames(ctx context.Context, cfg *config) *sendResult {
+func sendFramesWorker(ctx context.Context, cfg *config, workerID int, targetPPS int) *sendResult {
 	conn, err := net.Dial("udp6", cfg.ProxyAddr)
 	if err != nil {
-		log.Fatalf("dial %s: %v", cfg.ProxyAddr, err)
+		log.Fatalf("sender %d: dial %s: %v", workerID, cfg.ProxyAddr, err)
 	}
 	defer func() { _ = conn.Close() }()
 
@@ -439,7 +441,7 @@ func sendFrames(ctx context.Context, cfg *config) *sendResult {
 	// Pre-allocate a reusable frame.
 	f := &frame.Frame{}
 
-	log.Printf("sending at %d pps for %s to %s ...", cfg.PPS, cfg.Duration, cfg.ProxyAddr)
+	log.Printf("sender %d: sending at %d pps for %s to %s ...", workerID, targetPPS, cfg.Duration, cfg.ProxyAddr)
 
 	// Use a busy-loop with time-based pacing so we can achieve high PPS
 	// targets that exceed the Go runtime timer resolution (~1 ms).
@@ -457,7 +459,7 @@ func sendFrames(ctx context.Context, cfg *config) *sendResult {
 		}
 
 		elapsedSec := now.Sub(start).Seconds()
-		target := int64(elapsedSec * float64(cfg.PPS))
+		target := int64(elapsedSec * float64(targetPPS))
 		if framesSent >= target {
 			// Ahead of schedule; yield briefly to avoid pure busy-wait.
 			time.Sleep(100 * time.Microsecond)
@@ -498,9 +500,9 @@ func sendFrames(ctx context.Context, cfg *config) *sendResult {
 		framesSent++
 		bytesSent += int64(n)
 
-		if framesSent%int64(cfg.PPS) == 0 {
-			log.Printf("  sent %d frames (%.1f s, %.0f actual pps)",
-				framesSent, elapsedSec, float64(framesSent)/elapsedSec)
+		if framesSent%int64(targetPPS) == 0 {
+			log.Printf("  sender %d: sent %d frames (%.1f s, %.0f actual pps)",
+				workerID, framesSent, elapsedSec, float64(framesSent)/elapsedSec)
 		}
 	}
 
@@ -512,13 +514,54 @@ done:
 		mbps = float64(bytesSent) * 8 / elapsed.Seconds() / 1e6
 	}
 
-	log.Printf("send complete: %d frames, %d bytes, %.1f s, %.0f pps, %.2f Mbps",
-		framesSent, bytesSent, elapsed.Seconds(), actualPPS, mbps)
+	log.Printf("sender %d complete: %d frames, %d bytes, %.1f s, %.0f pps, %.2f Mbps",
+		workerID, framesSent, bytesSent, elapsed.Seconds(), actualPPS, mbps)
 
 	return &sendResult{
 		FramesSent: framesSent,
 		BytesSent:  bytesSent,
 		Elapsed:    elapsed,
+		ActualPPS:  actualPPS,
+		Mbps:       mbps,
+	}
+}
+
+func sendFrames(ctx context.Context, cfg *config) *sendResult {
+	if cfg.Senders <= 1 {
+		return sendFramesWorker(ctx, cfg, 0, cfg.PPS)
+	}
+	ppsEach := cfg.PPS / cfg.Senders
+	results := make([]*sendResult, cfg.Senders)
+	var wg sync.WaitGroup
+	for i := range cfg.Senders {
+		wg.Add(1)
+		go func(idx int) {
+			defer wg.Done()
+			results[idx] = sendFramesWorker(ctx, cfg, idx, ppsEach)
+		}(i)
+	}
+	wg.Wait()
+
+	var totalFrames, totalBytes int64
+	var maxElapsed time.Duration
+	for _, r := range results {
+		totalFrames += r.FramesSent
+		totalBytes += r.BytesSent
+		if r.Elapsed > maxElapsed {
+			maxElapsed = r.Elapsed
+		}
+	}
+	var actualPPS, mbps float64
+	if maxElapsed > 0 {
+		actualPPS = float64(totalFrames) / maxElapsed.Seconds()
+		mbps = float64(totalBytes) * 8 / maxElapsed.Seconds() / 1e6
+	}
+	log.Printf("aggregate: %d frames, %d bytes, %.1f s, %.0f pps, %.2f Mbps",
+		totalFrames, totalBytes, maxElapsed.Seconds(), actualPPS, mbps)
+	return &sendResult{
+		FramesSent: totalFrames,
+		BytesSent:  totalBytes,
+		Elapsed:    maxElapsed,
 		ActualPPS:  actualPPS,
 		Mbps:       mbps,
 	}
@@ -600,6 +643,7 @@ func generateReport(r *testResults) string {
 	w("| Num groups | %d |\n", numGroups)
 	w("| Payload range | %d–%d bytes |\n", r.Config.PayloadMin, r.Config.PayloadMax)
 	w("| Target PPS | %d |\n", r.Config.PPS)
+	w("| Senders | %d |\n", r.Config.Senders)
 	w("| Duration | %s |\n", r.Config.Duration)
 	w("| LXD collection | %v |\n", r.Config.LXD)
 	w("| Receivers | %s |\n", strings.Join(r.Config.Receivers, ", "))
@@ -894,8 +938,8 @@ func main() {
 	numGroups := uint32(1) << cfg.ShardBits
 
 	log.Printf("=== perf-test ===")
-	log.Printf("proxy=%s  metrics=%s  shard_bits=%d  groups=%d  pps=%d  duration=%s",
-		cfg.ProxyAddr, cfg.MetricsURL, cfg.ShardBits, numGroups, cfg.PPS, cfg.Duration)
+	log.Printf("proxy=%s  metrics=%s  shard_bits=%d  groups=%d  pps=%d  senders=%d  duration=%s",
+		cfg.ProxyAddr, cfg.MetricsURL, cfg.ShardBits, numGroups, cfg.PPS, cfg.Senders, cfg.Duration)
 	log.Printf("payload=%d–%d bytes  lxd=%v  receivers=%v  output=%s",
 		cfg.PayloadMin, cfg.PayloadMax, cfg.LXD, cfg.Receivers, cfg.Output)
 

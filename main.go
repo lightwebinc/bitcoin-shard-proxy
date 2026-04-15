@@ -54,11 +54,11 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/jefflightweb/bitcoin-shard-proxy/config"
-	"github.com/jefflightweb/bitcoin-shard-proxy/forwarder"
-	"github.com/jefflightweb/bitcoin-shard-proxy/metrics"
-	"github.com/jefflightweb/bitcoin-shard-proxy/shard"
-	"github.com/jefflightweb/bitcoin-shard-proxy/worker"
+	"github.com/lightwebinc/bitcoin-shard-proxy/config"
+	"github.com/lightwebinc/bitcoin-shard-proxy/forwarder"
+	"github.com/lightwebinc/bitcoin-shard-proxy/metrics"
+	"github.com/lightwebinc/bitcoin-shard-proxy/shard"
+	"github.com/lightwebinc/bitcoin-shard-proxy/worker"
 )
 
 func main() {

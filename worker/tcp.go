@@ -25,9 +25,9 @@ import (
 	"net"
 	"sync"
 
-	"github.com/jefflightweb/bitcoin-shard-proxy/forwarder"
-	"github.com/jefflightweb/bitcoin-shard-proxy/frame"
-	"github.com/jefflightweb/bitcoin-shard-proxy/metrics"
+	"github.com/lightwebinc/bitcoin-shard-proxy/forwarder"
+	"github.com/lightwebinc/bitcoin-shard-proxy/frame"
+	"github.com/lightwebinc/bitcoin-shard-proxy/metrics"
 )
 
 const tcpBufSize = 64 * 1024 // 64 KiB read buffer per TCP connection

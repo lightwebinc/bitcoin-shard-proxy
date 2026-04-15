@@ -1,6 +1,6 @@
 # bitcoin-shard-proxy
 
-[![CI](https://github.com/jefflightweb/bitcoin-shard-proxy/actions/workflows/ci.yml/badge.svg)](https://github.com/jefflightweb/bitcoin-shard-proxy/actions/workflows/ci.yml)
+[![CI](https://github.com/lightwebinc/bitcoin-shard-proxy/actions/workflows/ci.yml/badge.svg)](https://github.com/lightwebinc/bitcoin-shard-proxy/actions/workflows/ci.yml)
 
 A high-throughput proxy that receives Bitcoin SV (BSV Blockchain) v2 transaction
 frames over UDP (or TCP for reliable delivery), derives an IPv6 multicast group
