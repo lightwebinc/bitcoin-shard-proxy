@@ -120,7 +120,7 @@ When a shutdown signal is received the proxy performs a two-phase shutdown:
 
 Setting `-drain-timeout 0s` (the default) skips the sleep and closes sockets immediately after marking draining — suitable for single-node or development deployments.
 
-For production with a load balancer or BGP AnyCast, set `-drain-timeout` to at least the LB health-check interval plus one check period:
+For production with a load balancer or BGP, set `-drain-timeout` to at least the LB health-check interval plus one check period:
 
 ```bash
 # LB health-check every 5 s — allow two missed checks before closing
