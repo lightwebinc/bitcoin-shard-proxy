@@ -50,7 +50,7 @@ tx_c  ──TCP──▶ [tcp conn] ─▶ forwarder ─▶ FF05::2 ──▶ su
 
 ## Wire Format
 
-### v2 (current — 84 bytes, 8-byte aligned, zero padding)
+### v2 (current — 100 bytes, 8-byte aligned, zero padding)
 
 ```
 Offset  Size  Align  Field
@@ -62,8 +62,9 @@ Offset  Size  Align  Field
      8    32   8 B   Transaction ID   raw 256-bit txid (internal byte order)
     40     8   8 B   Shard seq num    uint64 BE; 0 = unset
     48    32   8 B   Subtree ID       32-byte batch identifier; zeros = unset
-    80     4   8 B   Payload length   uint32 BE
-    84     *   —     BSV tx payload
+    80    16   8 B   Sender ID        original BSV sender IPv6 (net.IP.To16()); zeros = unset
+    96     4   4 B   Payload length   uint32 BE
+   100     *   —     BSV tx payload
 ```
 
 ### v1 BRC-12 (legacy — 44 bytes, accepted, forwarded verbatim)
@@ -80,16 +81,18 @@ Offset  Size  Align  Field            Value / notes
     44     *   —     BSV tx payload   raw serialised transaction bytes
 ```
 
-v1 frames carry no `ShardSeqNum`, `SubtreeID`, or reserved-byte fields beyond
+v1 frames carry no `ShardSeqNum`, `SubtreeID`, or `SenderID` fields beyond
 byte 7. The proxy accepts them and forwards the original bytes unchanged.
 
 ## Hot Path
 
-Every received datagram follows the same two-step path:
+Every received datagram follows the same path:
 1. `frame.Decode(raw)` — extract the TxID; drop on bad magic or unknown version.
-2. `WriteTo(raw)` — write the **original bytes verbatim** to every egress target.
+2. **SenderID stamp (v2 only)** — overwrite `raw[80:96]` in-place with the
+   ingress source address (`net.IP.To16()`). v1 frames are untouched.
+3. `WriteTo(raw)` — write the raw bytes to every egress target.
 
-No re-encoding, no field modification, no per-worker encode buffer.
+No re-encoding, no per-worker encode buffer.
 
 ## Graceful Shutdown
 

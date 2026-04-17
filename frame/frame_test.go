@@ -16,8 +16,8 @@ func makeFrame(txidByte0 byte, payload []byte) *Frame {
 // ── Constants ─────────────────────────────────────────────────────────────────
 
 func TestHeaderSize(t *testing.T) {
-	if HeaderSize != 84 {
-		t.Errorf("HeaderSize = %d, want 84", HeaderSize)
+	if HeaderSize != 100 {
+		t.Errorf("HeaderSize = %d, want 100", HeaderSize)
 	}
 }
 
@@ -74,8 +74,35 @@ func TestRoundTrip(t *testing.T) {
 	if got.SubtreeID != f.SubtreeID {
 		t.Errorf("SubtreeID mismatch")
 	}
+	if got.SenderID != f.SenderID {
+		t.Errorf("SenderID mismatch: got %x, want %x", got.SenderID, f.SenderID)
+	}
 	if !bytes.Equal(got.Payload, payload) {
 		t.Errorf("Payload mismatch: got %q, want %q", got.Payload, payload)
+	}
+}
+
+func TestRoundTripWithSenderID(t *testing.T) {
+	payload := []byte("tx-with-sender")
+	f := &Frame{
+		Payload:     payload,
+		ShardSeqNum: 42,
+	}
+	f.TxID[0] = 0xCC
+	for i := range f.SenderID {
+		f.SenderID[i] = byte(0x20 + i)
+	}
+
+	buf := make([]byte, HeaderSize+len(payload))
+	if _, err := Encode(f, buf); err != nil {
+		t.Fatalf("Encode: %v", err)
+	}
+	got, err := Decode(buf)
+	if err != nil {
+		t.Fatalf("Decode: %v", err)
+	}
+	if got.SenderID != f.SenderID {
+		t.Errorf("SenderID mismatch: got %x, want %x", got.SenderID, f.SenderID)
 	}
 }
 
@@ -111,12 +138,17 @@ func TestFieldOffsets(t *testing.T) {
 	if buf[48] != 0xCC {
 		t.Errorf("buf[48] (SubtreeID[0]) = 0x%02X, want 0xCC", buf[48])
 	}
-	payLen := binary.BigEndian.Uint32(buf[80:84])
-	if payLen != 1 {
-		t.Errorf("buf[80:84] (PayLen) = %d, want 1", payLen)
+	for i := 80; i < 96; i++ {
+		if buf[i] != 0x00 {
+			t.Errorf("buf[%d] (SenderID[%d]) = 0x%02X, want 0x00", i, i-80, buf[i])
+		}
 	}
-	if buf[84] != 0xFF {
-		t.Errorf("buf[84] (Payload[0]) = 0x%02X, want 0xFF", buf[84])
+	payLen := binary.BigEndian.Uint32(buf[96:100])
+	if payLen != 1 {
+		t.Errorf("buf[96:100] (PayLen) = %d, want 1", payLen)
+	}
+	if buf[100] != 0xFF {
+		t.Errorf("buf[100] (Payload[0]) = 0x%02X, want 0xFF", buf[100])
 	}
 }
 
@@ -185,6 +217,9 @@ func TestDecodeV1ZeroedV2Fields(t *testing.T) {
 	}
 	if f.SubtreeID != ([32]byte{}) {
 		t.Error("SubtreeID should be all zeros for v1")
+	}
+	if f.SenderID != ([16]byte{}) {
+		t.Error("SenderID should be all zeros for v1")
 	}
 }
 
@@ -287,8 +322,8 @@ func TestDecodeErrTooLarge(t *testing.T) {
 	buf := make([]byte, HeaderSize)
 	buf[0], buf[1], buf[2], buf[3] = 0xE3, 0xE1, 0xF3, 0xE8
 	buf[6] = FrameVerV2
-	// Write a payLen that exceeds MaxPayload into bytes 80–83.
-	binary.BigEndian.PutUint32(buf[80:84], uint32(MaxPayload+1))
+	// Write a payLen that exceeds MaxPayload into bytes 96–99.
+	binary.BigEndian.PutUint32(buf[96:100], uint32(MaxPayload+1))
 	_, err := Decode(buf)
 	if err != ErrTooLarge {
 		t.Errorf("want ErrTooLarge, got %v", err)

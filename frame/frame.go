@@ -15,7 +15,7 @@
 //	    40     4  Payload length   uint32; max [MaxPayload] bytes
 //	    44     *  BSV tx payload
 //
-// # Wire format — v2 (84 bytes, zero padding, all multi-byte fields 8-byte aligned)
+// # Wire format — v2 (100 bytes, zero padding, all multi-byte fields 8-byte aligned)
 //
 //	Offset  Size  Align  Field            Value / notes
 //	------  ----  -----  -----            -------------
@@ -26,8 +26,9 @@
 //	     8    32   8B    Transaction ID   raw 256-bit txid (NOT display-reversed)
 //	    40     8   8B    Shard seq num    uint64 BE; sender-assigned; 0 = unset
 //	    48    32   8B    Subtree ID       32-byte batch identifier assigned by tx processor; zeros = unset
-//	    80     4   8B    Payload length   uint32; max [MaxPayload] bytes
-//	    84     *   4B    BSV tx payload   raw serialised transaction bytes
+//	    80    16   8B    Sender ID        original BSV sender IPv6 address (net.IP.To16()); zeros = unset
+//	    96     4   4B    Payload length   uint32; max [MaxPayload] bytes
+//	   100     *   —     BSV tx payload   raw serialised transaction bytes
 //
 // The txid at offset 8 is in internal byte order (as used in the BSV P2P
 // protocol and raw transaction data), not the reversed display order shown
@@ -36,8 +37,8 @@
 // # v1 handling
 //
 // [Decode] accepts both v1 and v2 frames. v1 frames are decoded into a [Frame]
-// with [Version] = [FrameVerV1] and zero-valued [ShardSeqNum] and [SubtreeID].
-// The forwarder forwards v1 frames verbatim (no re-encoding).
+// with [Version] = [FrameVerV1] and zero-valued [ShardSeqNum], [SubtreeID],
+// and [SenderID]. The forwarder forwards v1 frames verbatim (no re-encoding).
 // Unknown versions return [ErrBadVer].
 //
 // # BSV transaction format compatibility
@@ -77,7 +78,7 @@ const (
 
 	// HeaderSize is the fixed size of the v2 frame header in bytes.
 	// Kept as HeaderSize (not HeaderSizeV2) so callers need no rename.
-	HeaderSize = 84
+	HeaderSize = 100
 
 	// MaxPayload is the maximum accepted payload size. BSV's consensus rule
 	// caps individual transactions well below this; the limit guards against
@@ -111,6 +112,7 @@ type Frame struct {
 	TxID        [32]byte // Raw 256-bit transaction ID (internal byte order)
 	ShardSeqNum uint64   // Monotonic sequence number; 0 = unset (always 0 for v1)
 	SubtreeID   [32]byte // 32-byte batch identifier; zeros = unset (always zero for v1)
+	SenderID    [16]byte // Original BSV sender IPv6 address (net.IP.To16()); zeros = unset (always zero for v1)
 	Payload     []byte   // Raw serialised BSV transaction
 }
 
@@ -134,8 +136,9 @@ func Encode(f *Frame, buf []byte) (int, error) {
 	copy(buf[8:40], f.TxID[:])
 	binary.BigEndian.PutUint64(buf[40:48], f.ShardSeqNum)
 	copy(buf[48:80], f.SubtreeID[:])
-	binary.BigEndian.PutUint32(buf[80:84], uint32(len(f.Payload)))
-	copy(buf[84:], f.Payload)
+	copy(buf[80:96], f.SenderID[:])
+	binary.BigEndian.PutUint32(buf[96:100], uint32(len(f.Payload)))
+	copy(buf[100:], f.Payload)
 
 	return total, nil
 }
@@ -146,8 +149,8 @@ func Encode(f *Frame, buf []byte) (int, error) {
 // not modify or reuse buf while the Frame is in scope.
 //
 // v1 frames (FrameVer 0x01) are decoded with [Version] = [FrameVerV1] and
-// zero-valued [ShardSeqNum] and [SubtreeID]. The forwarder forwards v1 frames
-// verbatim (no re-encoding).
+// zero-valued [ShardSeqNum], [SubtreeID], and [SenderID]. The forwarder
+// forwards v1 frames verbatim (no re-encoding).
 //
 // Unknown versions return [ErrBadVer].
 //
@@ -192,12 +195,12 @@ func decodeV1(buf []byte) (*Frame, error) {
 	return f, nil
 }
 
-// decodeV2 parses the 84-byte v2 header.
+// decodeV2 parses the 100-byte v2 header.
 func decodeV2(buf []byte) (*Frame, error) {
 	if len(buf) < HeaderSize {
 		return nil, ErrTooShort
 	}
-	payLen := int(binary.BigEndian.Uint32(buf[80:84]))
+	payLen := int(binary.BigEndian.Uint32(buf[96:100]))
 	if payLen > MaxPayload {
 		return nil, ErrTooLarge
 	}
@@ -208,6 +211,7 @@ func decodeV2(buf []byte) (*Frame, error) {
 	copy(f.TxID[:], buf[8:40])
 	f.ShardSeqNum = binary.BigEndian.Uint64(buf[40:48])
 	copy(f.SubtreeID[:], buf[48:80])
+	copy(f.SenderID[:], buf[80:96])
 	f.Payload = buf[HeaderSize : HeaderSize+payLen]
 	return f, nil
 }

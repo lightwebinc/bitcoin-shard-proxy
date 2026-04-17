@@ -9,7 +9,7 @@ monitors already configured for BSV traffic classify proxy datagrams correctly.
 
 ## 2. v2 Frame Format (current)
 
-**Header size:** 84 bytes, zero padding, all multi-byte fields 8-byte aligned.  
+**Header size:** 100 bytes, zero padding, all multi-byte fields 8-byte aligned.  
 **Byte order:** big-endian for all multi-byte integers.
 
 ```
@@ -22,8 +22,9 @@ Offset  Size  Align  Field            Value / notes
      8    32   8 B   Transaction ID   raw 256-bit txid (internal byte order)
     40     8   8 B   Shard seq num    uint64 BE; sender-assigned; 0 = unset
     48    32   8 B   Subtree ID       32-byte batch identifier; all-zeros = unset
-    80     4   8 B   Payload length   uint32; max 10 MiB
-    84     *   4 B   BSV tx payload   raw serialised transaction bytes
+    80    16   8 B   Sender ID        original BSV sender IPv6 (net.IP.To16()); all-zeros = unset
+    96     4   4 B   Payload length   uint32; max 10 MiB
+   100     *   —     BSV tx payload   raw serialised transaction bytes
 ```
 
 **Alignment verification:**
@@ -32,7 +33,8 @@ Offset  Size  Align  Field            Value / notes
 | TXID | 8 | 0 ✓ |
 | ShardSeqNum | 40 | 0 ✓ |
 | SubtreeID | 48 | 0 ✓ |
-| PayLen | 80 | 0 ✓ |
+| SenderID | 80 | 0 ✓ |
+| PayLen | 96 | 0 ✓ |
 
 ### 2.1 Fields
 
@@ -62,10 +64,16 @@ unchanged.
 transaction processor. All-zero bytes mean the field is unset. The proxy
 forwards this field unchanged.
 
-**Payload length (80:84)** — `uint32` big-endian. The number of payload bytes
+**Sender ID (80:96)** — 16 bytes. The original BSV sender's IP address in
+`net.IP.To16()` form: native IPv6 for IPv6 sources; `::ffff:a.b.c.d`
+(IPv4-mapped) for IPv4 sources. The proxy stamps this field **in-place** from
+the ingress source address before forwarding. All-zero bytes mean the field is
+unset (only possible if the source address is unknown).
+
+**Payload length (96:100)** — `uint32` big-endian. The number of payload bytes
 immediately following the header. Must not exceed 10 MiB.
 
-**Payload (84+)** — Raw serialised BSV transaction. Same format as the BSV P2P
+**Payload (100+)** — Raw serialised BSV transaction. Same format as the BSV P2P
 `tx` message payload (version LE32 + inputs + outputs + locktime LE32). No P2P
 message envelope wraps it.
 
@@ -138,9 +146,10 @@ The proxy processes each incoming datagram in two steps:
    bad magic, unsupported version, oversized payload, or truncated datagram.
    The TxID is extracted to derive the destination multicast group.
 
-2. **Forward (zero-copy)** — write the original raw bytes verbatim to every
-   configured egress interface via `IPV6_MULTICAST_IF`. The frame is never
-   modified; no re-encoding occurs.
+2. **Forward** — for v2 frames, overwrite `raw[80:96]` in-place with the
+   ingress source address (`SenderID`) before forwarding. Write the raw bytes
+   to every configured egress interface via `IPV6_MULTICAST_IF`. v1 frames are
+   forwarded verbatim without modification.
 
 ---
 
@@ -154,10 +163,10 @@ frames concatenated end-to-end with no additional envelope.
 1. Read 44 bytes (minimum header, sufficient for both v1 and the start of v2).
 2. Inspect `FrameVer` at byte 6.
    - **v1:** header is complete; `PayLen` is at bytes 40–43.
-   - **v2:** read 40 more bytes to complete the 84-byte header;
-     `PayLen` is at bytes 80–83.
+   - **v2:** read 56 more bytes to complete the 100-byte header;
+     `PayLen` is at bytes 96–99.
 3. Read exactly `PayLen` bytes (the payload).
-4. Forward the reassembled raw bytes verbatim (same as UDP path).
+4. Forward the reassembled raw bytes (SenderID stamped at 80–95 for v2).
 
 The proxy closes the TCP connection on any protocol violation (bad magic,
 unsupported version byte, `PayLen` exceeds 10 MiB, or read error).
@@ -187,5 +196,5 @@ All drops are counted in the `proxy_rx_drops_total` Prometheus metric with a
 | `ProtoVer` | `0x02BF` | Protocol version 703 |
 | `FrameVerV1` | `0x01` | Legacy BRC-12; accepted, forwarded verbatim |
 | `FrameVerV2` | `0x02` | Current |
-| `HeaderSize` | `84` | v2 header bytes |
+| `HeaderSize` | `100` | v2 header bytes |}
 | `MaxPayload` | `10485760` | 10 MiB |

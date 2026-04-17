@@ -44,8 +44,8 @@ path.
 
 TCP ingress provides reliable, ordered delivery for senders that require it
 (e.g. over lossy links). Each accepted connection carries a stream of v1 or v2
-frames concatenated end-to-end. The proxy reads 44 bytes first, extends to 84
-bytes if v2, then reads `PayLen` payload bytes.
+frames concatenated end-to-end. The proxy reads 44 bytes first, then extends
+to 100 bytes if v2 (`PayLen` at bytes 96–99), then reads `PayLen` payload bytes.
 
 TCP ingress is disabled by default. Enable it with:
 
@@ -84,9 +84,13 @@ Increasing bits by 1 splits every existing group into two child groups
 
 ## Forwarding
 
-The proxy forwards every frame verbatim (zero-copy `WriteTo`). No field
-modification occurs; `ShardSeqNum` and `SubtreeID` are passed through unchanged
-exactly as the sender set them.
+For **v2 frames**, the proxy stamps the `SenderID` field (bytes 80–95) in-place
+with the ingress source IPv6 address before forwarding. All other fields,
+including `ShardSeqNum` and `SubtreeID`, are passed through unchanged exactly
+as the sender set them.
+
+For **v1 frames**, the proxy forwards the original bytes verbatim without any
+modification.
 
 ---
 

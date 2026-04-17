@@ -4,8 +4,9 @@
 // # Hot path
 //
 // [Forwarder.Process] decodes the ingress frame (v1 or v2), derives the
-// multicast group from the TxID, and writes the original raw bytes verbatim
-// to every configured egress target — zero-copy, no modification.
+// multicast group from the TxID, stamps the [frame.Frame.SenderID] field
+// in-place at raw[80:96] for v2 frames (from the ingress source address),
+// then writes the raw bytes to every configured egress target.
 //
 // # Egress socket lifecycle
 //
@@ -103,10 +104,11 @@ func closeTargets(targets []Target, log *slog.Logger) {
 	}
 }
 
-// Process is the hot path: decode raw for routing, then forward verbatim.
+// Process is the hot path: decode raw for routing, stamp SenderID, then forward.
 //
-// The original raw bytes are written to every egress target unchanged
-// (zero-copy). workerID is used only for metrics labels.
+// For v2 frames, raw[80:96] is overwritten in-place with the IPv6 representation
+// of src before the datagram is sent to egress targets. v1 frames are forwarded
+// verbatim. workerID is used only for metrics labels.
 func (fw *Forwarder) Process(targets []Target, raw []byte, src net.Addr, workerID int) {
 	f, err := frame.Decode(raw)
 	if err != nil {
@@ -115,6 +117,11 @@ func (fw *Forwarder) Process(targets []Target, raw []byte, src net.Addr, workerI
 			fw.rec.PacketDropped(targets[0].Iface.Name, workerID, "decode_error")
 		}
 		return
+	}
+
+	if f.Version == frame.FrameVerV2 && src != nil {
+		ip := addrToIPv6(src)
+		copy(raw[80:96], ip[:])
 	}
 
 	groupIdx := fw.engine.GroupIndex(&f.TxID)
@@ -193,6 +200,24 @@ func probeEgressSocket(log *slog.Logger, conn *net.UDPConn, iface *net.Interface
 	}
 	log.Warn("egress probe warning", "iface", iface.Name, "err", err)
 	return nil
+}
+
+// addrToIPv6 extracts the IP address from a net.Addr and returns it as a
+// 16-byte IPv6 address via net.IP.To16(). IPv4 addresses become IPv4-mapped
+// IPv6 (::ffff:a.b.c.d). Returns all-zeros if addr is nil or unrecognised.
+func addrToIPv6(addr net.Addr) [16]byte {
+	var ip net.IP
+	switch a := addr.(type) {
+	case *net.UDPAddr:
+		ip = a.IP
+	case *net.TCPAddr:
+		ip = a.IP
+	}
+	var result [16]byte
+	if ip16 := ip.To16(); ip16 != nil {
+		copy(result[:], ip16)
+	}
+	return result
 }
 
 func isErrno(err error, target syscall.Errno) bool {
