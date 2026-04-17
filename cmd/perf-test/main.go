@@ -494,6 +494,7 @@ func sendFramesWorker(ctx context.Context, cfg *config, workerID int, targetPPS 
 
 		if _, err := conn.Write(buf[:n]); err != nil {
 			log.Printf("write: %v", err)
+			time.Sleep(10 * time.Microsecond)
 			continue
 		}
 
