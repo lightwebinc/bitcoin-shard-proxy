@@ -435,6 +435,9 @@ func sendFramesWorker(ctx context.Context, cfg *config, workerID int, targetPPS 
 	var framesSent int64
 	var bytesSent int64
 
+	// Stagger workers so their pacing bursts don't hit the NIC TX ring simultaneously.
+	time.Sleep(time.Duration(workerID) * time.Millisecond)
+
 	start := time.Now()
 	deadline := start.Add(cfg.Duration)
 
