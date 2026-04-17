@@ -54,10 +54,10 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/lightwebinc/bitcoin-shard-common/shard"
 	"github.com/lightwebinc/bitcoin-shard-proxy/config"
 	"github.com/lightwebinc/bitcoin-shard-proxy/forwarder"
 	"github.com/lightwebinc/bitcoin-shard-proxy/metrics"
-	"github.com/lightwebinc/bitcoin-shard-proxy/shard"
 	"github.com/lightwebinc/bitcoin-shard-proxy/worker"
 )
 

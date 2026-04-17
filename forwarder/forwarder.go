@@ -23,9 +23,9 @@ import (
 
 	"golang.org/x/sys/unix"
 
-	"github.com/lightwebinc/bitcoin-shard-proxy/frame"
+	"github.com/lightwebinc/bitcoin-shard-common/frame"
+	"github.com/lightwebinc/bitcoin-shard-common/shard"
 	"github.com/lightwebinc/bitcoin-shard-proxy/metrics"
-	"github.com/lightwebinc/bitcoin-shard-proxy/shard"
 )
 
 // Target pairs a network interface with its pre-opened multicast egress socket.

@@ -25,8 +25,8 @@ import (
 	"net"
 	"sync"
 
+	"github.com/lightwebinc/bitcoin-shard-common/frame"
 	"github.com/lightwebinc/bitcoin-shard-proxy/forwarder"
-	"github.com/lightwebinc/bitcoin-shard-proxy/frame"
 	"github.com/lightwebinc/bitcoin-shard-proxy/metrics"
 )
 

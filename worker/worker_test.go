@@ -9,9 +9,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/lightwebinc/bitcoin-shard-common/frame"
+	"github.com/lightwebinc/bitcoin-shard-common/shard"
 	"github.com/lightwebinc/bitcoin-shard-proxy/forwarder"
-	"github.com/lightwebinc/bitcoin-shard-proxy/frame"
-	"github.com/lightwebinc/bitcoin-shard-proxy/shard"
 )
 
 // ── New ───────────────────────────────────────────────────────────────────────

@@ -20,7 +20,7 @@ $(PERF):
 	go build -o $(PERF) ./cmd/perf-test/
 
 test:
-	go test ./frame/... ./shard/...
+	go test ./...
 
 test-e2e: $(BINARY) $(SEND) $(RECV)
 	PATH="$(CURDIR):$$PATH" sh test/run-e2e.sh

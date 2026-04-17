@@ -8,8 +8,8 @@ import (
 	"syscall"
 	"testing"
 
-	"github.com/lightwebinc/bitcoin-shard-proxy/frame"
-	"github.com/lightwebinc/bitcoin-shard-proxy/shard"
+	"github.com/lightwebinc/bitcoin-shard-common/frame"
+	"github.com/lightwebinc/bitcoin-shard-common/shard"
 )
 
 // ── helpers ───────────────────────────────────────────────────────────────────
