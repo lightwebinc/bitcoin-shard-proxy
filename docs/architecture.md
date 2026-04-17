@@ -115,9 +115,17 @@ Shutdown proceeds in two phases when `SIGINT` or `SIGTERM` is received:
 bitcoin-shard-proxy/
   main.go            entry point; wires config → engine → forwarder → workers
   config/            runtime configuration (flags + env vars + validation)
-  shard/             txid → group index → IPv6 multicast address derivation
-  frame/             v1/v2 wire format decode; encode used by tests and tooling
   forwarder/         decode → zero-copy verbatim forward pipeline
   worker/            per-CPU SO_REUSEPORT ingress loop; TCP ingress listener
   metrics/           OTel + Prometheus instrumentation
+```
+
+Protocol primitives are provided by
+[`github.com/lightwebinc/bitcoin-shard-common`](https://github.com/lightwebinc/bitcoin-shard-common):
+
+```
+bitcoin-shard-common/
+  frame/             v1/v2 wire format: Decode, Encode, constants, errors
+  shard/             txid → group index → IPv6 multicast address derivation
+  sequence/          per-shard atomic monotonic counters
 ```

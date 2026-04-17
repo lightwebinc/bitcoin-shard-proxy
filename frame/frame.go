@@ -1,5 +1,5 @@
 // Package frame defines the BSV-over-UDP v1 and v2 wire formats used by
-// bitcoin-shard-proxy.
+// the BSV transaction sharding pipeline.
 //
 // # Wire format — v1 (44 bytes, legacy)
 //

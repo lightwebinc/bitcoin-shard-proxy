@@ -1,5 +1,5 @@
 // Package shard derives IPv6 multicast group addresses from BSV transaction
-// IDs for deterministic packet-level sharding.
+// IDs for deterministic packet-level sharding across the BSV sharding pipeline.
 //
 // # Sharding strategy
 //

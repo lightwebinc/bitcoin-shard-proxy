@@ -1,7 +1,6 @@
-// Package sequence provides per-shard monotonic sequence counters for
-// bitcoin-shard-proxy. Each counter is an independent atomic uint64 that
-// increments without locking, giving O(1) Next calls with no contention
-// between shards.
+// Package sequence provides per-shard monotonic sequence counters.
+// Each counter is an independent atomic uint64 that increments without locking,
+// giving O(1) Next calls with no contention between shards.
 package sequence
 
 import "sync/atomic"
