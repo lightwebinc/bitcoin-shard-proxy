@@ -44,7 +44,7 @@ func main() {
 
 	e := shard.New(0xFF05, [11]byte{}, *shardBits)
 	payload := []byte("test-bsv-transaction-payload")
-	buf := make([]byte, frame.HeaderSize+len(payload))
+	buf := make([]byte, frame.HeaderSize+len(payload)) // HeaderSize=108 includes PayLen
 	interval := time.Duration(*intervalMs) * time.Millisecond
 
 	fmt.Printf("sending to %s  shard_bits=%d  spread=%v\n\n", *addr, *shardBits, *spread)

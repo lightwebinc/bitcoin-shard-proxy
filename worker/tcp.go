@@ -5,11 +5,12 @@
 //
 // Each TCP connection carries a stream of v1 or v2 frames with no framing
 // envelope. The proxy reads the minimum header first (44 bytes for v1,
-// extended to 104 for v2), then reads the declared payload:
+// extended to 108 for v2), then reads the declared payload:
 //
 //  1. Read [frame.HeaderSizeV1] (44) bytes — enough to see the version byte
 //     and, for v1, the PayLen field.
-//  2. If FrameVer == v2: read 60 more bytes to complete the 104-byte header.
+//  2. If FrameVer == v2: read 64 more bytes to complete the 108-byte header
+//     (bytes 44–107), which includes the 4-byte PayLen field at bytes 104–107.
 //  3. Read PayLen bytes of payload.
 //  4. Forward assembled frame to [forwarder.Forwarder.Process].
 //
@@ -136,7 +137,8 @@ func (ti *TCPIngress) handleConn(conn net.Conn, targets []forwarder.Target) {
 			payLen = int(uint32(connEncodeBuf[40])<<24 | uint32(connEncodeBuf[41])<<16 |
 				uint32(connEncodeBuf[42])<<8 | uint32(connEncodeBuf[43]))
 		case frame.FrameVerV2:
-			// Step 2: read the remaining 60 bytes to complete the 104-byte v2 header.
+			// Step 2: read the remaining 64 bytes to complete the 108-byte v2 header
+			// (includes the 4-byte PayLen field at bytes 104–107).
 			if _, err := io.ReadFull(br, connEncodeBuf[frame.HeaderSizeV1:frame.HeaderSize]); err != nil {
 				ti.log.Debug("TCP read v2 header extension error", "remote", remote, "err", err)
 				return
