@@ -21,10 +21,17 @@ jobs:
       contents: read
     steps:
       - uses: actions/checkout@v6
+        with:
+          path: bitcoin-shard-proxy
+
+      - uses: actions/checkout@v6
+        with:
+          repository: lightwebinc/bitcoin-shard-common
+          path: bitcoin-shard-common
 
       - uses: actions/setup-go@v6
         with:
-          go-version-file: go.mod
+          go-version-file: bitcoin-shard-proxy/go.mod
 
       - name: Initialize CodeQL
         uses: github/codeql-action/init@v4

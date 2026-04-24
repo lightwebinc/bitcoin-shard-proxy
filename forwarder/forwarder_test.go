@@ -45,7 +45,7 @@ func makeTargets(t *testing.T, conns ...*net.UDPConn) []Target {
 	return tgts
 }
 
-func buildBRC123Frame(t *testing.T, txidByte0 byte, shardSeqNum uint32, payload []byte) []byte {
+func buildBRC122Frame(t *testing.T, txidByte0 byte, shardSeqNum uint32, payload []byte) []byte {
 	t.Helper()
 	f := &frame.Frame{
 		ShardSeqNum: shardSeqNum,
@@ -79,10 +79,10 @@ func makeForwarder() *Forwarder {
 
 // ── forward path ─────────────────────────────────────────────────────────────
 
-func TestProcessBRC123FrameForwardedVerbatim(t *testing.T) {
+func TestProcessBRC122FrameForwardedVerbatim(t *testing.T) {
 	conn, _ := openLoopbackUDP(t)
 	fw := makeForwarder()
-	raw := buildBRC123Frame(t, 0xAB, 999, nil)
+	raw := buildBRC122Frame(t, 0xAB, 999, nil)
 	// WriteTo to multicast dst will fail on loopback — that's fine, no panic.
 	fw.Process(makeTargets(t, conn), raw, fakeAddr{}, 0)
 }
@@ -114,14 +114,14 @@ func TestProcessMultipleTargets(t *testing.T) {
 	conn1, _ := openLoopbackUDP(t)
 	conn2, _ := openLoopbackUDP(t)
 	fw := makeForwarder()
-	raw := buildBRC123Frame(t, 0xAB, 1, nil)
+	raw := buildBRC122Frame(t, 0xAB, 1, nil)
 	fw.Process(makeTargets(t, conn1, conn2), raw, fakeAddr{}, 0)
 }
 
 func TestProcessDebugMode(t *testing.T) {
 	engine := shard.New(0xFF05, [11]byte{}, 8)
 	fw := New(engine, 9001, true, nil)
-	raw := buildBRC123Frame(t, 0xAB, 1, nil)
+	raw := buildBRC122Frame(t, 0xAB, 1, nil)
 	conn, _ := openLoopbackUDP(t)
 	fw.Process(makeTargets(t, conn), raw, fakeAddr{}, 0)
 }

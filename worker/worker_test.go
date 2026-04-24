@@ -280,7 +280,7 @@ func TestHandleConnPayloadTooLarge(t *testing.T) {
 	hdr := make([]byte, frame.HeaderSize)
 	hdr[0], hdr[1], hdr[2], hdr[3] = 0xE3, 0xE1, 0xF3, 0xE8
 	hdr[4], hdr[5] = 0x02, 0xBF
-	hdr[6] = frame.FrameVerBRC123
+	hdr[6] = frame.FrameVerBRC122
 	// PayLen at bytes 88-91: set to MaxPayload + 1
 	oversize := uint32(frame.MaxPayload + 1)
 	hdr[88] = byte(oversize >> 24)
