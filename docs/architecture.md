@@ -65,7 +65,7 @@ Offset  Size  Align  Field
     48     4   8B    Shard Sequence Number uint32 BE; monotonic counter; 0 = unset
     52     4   —     Reserved              padding; must be 0x00000000
     56    32   8B    Subtree ID            32-byte batch identifier; zeros = unset
-    88     4   8B    Payload length        uint32 BE; max 10 MiB
+    88     4   8B    Payload length        uint32 BE
     92     *   —     BSV tx payload
 ```
 
@@ -79,7 +79,7 @@ Offset  Size  Align  Field            Value / notes
      6     1   —     Frame version    0x01
      7     1   —     Reserved         0x00
      8    32   —     Transaction ID   raw 256-bit txid (internal byte order)
-    40     4   —     Payload length   uint32 BE; max 10 MiB
+    40     4   —     Payload length   uint32 BE
     44     *   —     BSV tx payload   raw serialised transaction bytes
 ```
 

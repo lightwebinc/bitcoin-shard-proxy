@@ -111,12 +111,12 @@ func (ti *TCPIngress) handleConn(conn net.Conn, targets []forwarder.Target) {
 	ti.log.Debug("TCP connection accepted", "remote", remote)
 
 	br := bufio.NewReaderSize(conn, tcpBufSize)
-	connEncodeBuf := make([]byte, frame.HeaderSize+frame.MaxPayload)
+	hdrBuf := make([]byte, frame.HeaderSize)
 
 	for {
 		// Step 1: read the v1 minimum header (44 bytes). This covers both
 		// v1 (complete header) and the leading 44 bytes of a BRC-122 header.
-		if _, err := io.ReadFull(br, connEncodeBuf[:frame.HeaderSizeLegacy]); err != nil {
+		if _, err := io.ReadFull(br, hdrBuf[:frame.HeaderSizeLegacy]); err != nil {
 			if err != io.EOF && !isClosedErr(err) {
 				ti.log.Debug("TCP read header error", "remote", remote, "err", err)
 			}
@@ -124,48 +124,44 @@ func (ti *TCPIngress) handleConn(conn net.Conn, targets []forwarder.Target) {
 		}
 
 		// Validate magic before reading further.
-		if connEncodeBuf[0] != 0xE3 || connEncodeBuf[1] != 0xE1 ||
-			connEncodeBuf[2] != 0xF3 || connEncodeBuf[3] != 0xE8 {
+		if hdrBuf[0] != 0xE3 || hdrBuf[1] != 0xE1 ||
+			hdrBuf[2] != 0xF3 || hdrBuf[3] != 0xE8 {
 			ti.log.Warn("TCP bad magic; closing connection", "remote", remote)
 			return
 		}
 
 		var hdrSize, payLen int
-		switch connEncodeBuf[6] {
+		switch hdrBuf[6] {
 		case frame.FrameVerV1:
 			hdrSize = frame.HeaderSizeLegacy
-			payLen = int(uint32(connEncodeBuf[40])<<24 | uint32(connEncodeBuf[41])<<16 |
-				uint32(connEncodeBuf[42])<<8 | uint32(connEncodeBuf[43]))
+			payLen = int(uint32(hdrBuf[40])<<24 | uint32(hdrBuf[41])<<16 |
+				uint32(hdrBuf[42])<<8 | uint32(hdrBuf[43]))
 		case frame.FrameVerBRC122:
 			// Step 2: read the remaining 48 bytes to complete the 92-byte BRC-122 header
 			// (includes the 4-byte PayLen field at bytes 88–91).
-			if _, err := io.ReadFull(br, connEncodeBuf[frame.HeaderSizeLegacy:frame.HeaderSize]); err != nil {
+			if _, err := io.ReadFull(br, hdrBuf[frame.HeaderSizeLegacy:frame.HeaderSize]); err != nil {
 				ti.log.Debug("TCP read BRC-122 header extension error", "remote", remote, "err", err)
 				return
 			}
 			hdrSize = frame.HeaderSize
-			payLen = int(uint32(connEncodeBuf[88])<<24 | uint32(connEncodeBuf[89])<<16 |
-				uint32(connEncodeBuf[90])<<8 | uint32(connEncodeBuf[91]))
+			payLen = int(uint32(hdrBuf[88])<<24 | uint32(hdrBuf[89])<<16 |
+				uint32(hdrBuf[90])<<8 | uint32(hdrBuf[91]))
 		default:
 			ti.log.Warn("TCP unsupported frame version; closing connection",
-				"remote", remote, "ver", connEncodeBuf[6])
+				"remote", remote, "ver", hdrBuf[6])
 			return
 		}
 
-		if payLen > frame.MaxPayload {
-			ti.log.Warn("TCP PayLen exceeds MaxPayload; closing connection",
-				"remote", remote, "pay_len", payLen)
-			return
-		}
-
-		// Step 3: read payload bytes.
+		// Step 3: allocate frame buffer and read payload.
+		frameBuf := make([]byte, hdrSize+payLen)
+		copy(frameBuf, hdrBuf[:hdrSize])
 		if payLen > 0 {
-			if _, err := io.ReadFull(br, connEncodeBuf[hdrSize:hdrSize+payLen]); err != nil {
+			if _, err := io.ReadFull(br, frameBuf[hdrSize:]); err != nil {
 				ti.log.Debug("TCP read payload error", "remote", remote, "err", err)
 				return
 			}
 		}
 
-		ti.fwd.Process(targets, connEncodeBuf[:hdrSize+payLen], remote, -1)
+		ti.fwd.Process(targets, frameBuf, remote, -1)
 	}
 }
