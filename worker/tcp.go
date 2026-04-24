@@ -3,19 +3,19 @@
 //
 // # Protocol
 //
-// Each TCP connection carries a stream of v1 or v2 frames with no framing
+// Each TCP connection carries a stream of v1 or BRC-123 frames with no framing
 // envelope. The proxy reads the minimum header first (44 bytes for v1,
-// extended to 108 for v2), then reads the declared payload:
+// extended to 92 for BRC-123), then reads the declared payload:
 //
-//  1. Read [frame.HeaderSizeV1] (44) bytes — enough to see the version byte
+//  1. Read [frame.HeaderSizeLegacy] (44) bytes — enough to see the version byte
 //     and, for v1, the PayLen field.
-//  2. If FrameVer == v2: read 64 more bytes to complete the 108-byte header
-//     (bytes 44–107), which includes the 4-byte PayLen field at bytes 104–107.
+//  2. If FrameVer == BRC-123: read 48 more bytes to complete the 92-byte header
+//     (bytes 44–91), which includes the 4-byte PayLen field at bytes 88–91.
 //  3. Read PayLen bytes of payload.
 //  4. Forward assembled frame to [forwarder.Forwarder.Process].
 //
 // A [bufio.Reader] (64 KiB) absorbs kernel round-trips under burst load.
-// v1 and v2 frames are forwarded verbatim.
+// v1 and BRC-123 frames are forwarded verbatim.
 package worker
 
 import (
@@ -33,7 +33,7 @@ import (
 
 const tcpBufSize = 64 * 1024 // 64 KiB read buffer per TCP connection
 
-// TCPIngress listens for TCP connections carrying a stream of v1 or v2 frames
+// TCPIngress listens for TCP connections carrying a stream of v1 or BRC-123 frames
 // and forwards each frame via the shared [forwarder.Forwarder].
 type TCPIngress struct {
 	fwd    *forwarder.Forwarder
@@ -102,7 +102,7 @@ func (ti *TCPIngress) Run(listenAddr string, listenPort int, done <-chan struct{
 	}
 }
 
-// handleConn reads a stream of v1 or v2 frames from conn and forwards each.
+// handleConn reads a stream of v1 or BRC-123 frames from conn and forwards each.
 // The connection is closed on any read error or protocol violation.
 // Each goroutine owns its own encode and assembly buffers.
 func (ti *TCPIngress) handleConn(conn net.Conn, targets []forwarder.Target) {
@@ -115,8 +115,8 @@ func (ti *TCPIngress) handleConn(conn net.Conn, targets []forwarder.Target) {
 
 	for {
 		// Step 1: read the v1 minimum header (44 bytes). This covers both
-		// v1 (complete header) and the leading 44 bytes of a v2 header.
-		if _, err := io.ReadFull(br, connEncodeBuf[:frame.HeaderSizeV1]); err != nil {
+		// v1 (complete header) and the leading 44 bytes of a BRC-123 header.
+		if _, err := io.ReadFull(br, connEncodeBuf[:frame.HeaderSizeLegacy]); err != nil {
 			if err != io.EOF && !isClosedErr(err) {
 				ti.log.Debug("TCP read header error", "remote", remote, "err", err)
 			}
@@ -133,19 +133,19 @@ func (ti *TCPIngress) handleConn(conn net.Conn, targets []forwarder.Target) {
 		var hdrSize, payLen int
 		switch connEncodeBuf[6] {
 		case frame.FrameVerV1:
-			hdrSize = frame.HeaderSizeV1
+			hdrSize = frame.HeaderSizeLegacy
 			payLen = int(uint32(connEncodeBuf[40])<<24 | uint32(connEncodeBuf[41])<<16 |
 				uint32(connEncodeBuf[42])<<8 | uint32(connEncodeBuf[43]))
-		case frame.FrameVerV2:
-			// Step 2: read the remaining 64 bytes to complete the 108-byte v2 header
-			// (includes the 4-byte PayLen field at bytes 104–107).
-			if _, err := io.ReadFull(br, connEncodeBuf[frame.HeaderSizeV1:frame.HeaderSize]); err != nil {
-				ti.log.Debug("TCP read v2 header extension error", "remote", remote, "err", err)
+		case frame.FrameVerBRC123:
+			// Step 2: read the remaining 48 bytes to complete the 92-byte BRC-123 header
+			// (includes the 4-byte PayLen field at bytes 88–91).
+			if _, err := io.ReadFull(br, connEncodeBuf[frame.HeaderSizeLegacy:frame.HeaderSize]); err != nil {
+				ti.log.Debug("TCP read BRC-123 header extension error", "remote", remote, "err", err)
 				return
 			}
 			hdrSize = frame.HeaderSize
-			payLen = int(uint32(connEncodeBuf[104])<<24 | uint32(connEncodeBuf[105])<<16 |
-				uint32(connEncodeBuf[106])<<8 | uint32(connEncodeBuf[107]))
+			payLen = int(uint32(connEncodeBuf[88])<<24 | uint32(connEncodeBuf[89])<<16 |
+				uint32(connEncodeBuf[90])<<8 | uint32(connEncodeBuf[91]))
 		default:
 			ti.log.Warn("TCP unsupported frame version; closing connection",
 				"remote", remote, "ver", connEncodeBuf[6])

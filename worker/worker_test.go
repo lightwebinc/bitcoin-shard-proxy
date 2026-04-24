@@ -202,7 +202,7 @@ func dialHandleConn(t *testing.T, write func(net.Conn)) {
 	}
 }
 
-func buildTCPFrame(t *testing.T, txidByte byte, seq uint64, payload []byte) []byte {
+func buildTCPFrame(t *testing.T, txidByte byte, seq uint32, payload []byte) []byte {
 	t.Helper()
 	f := &frame.Frame{ShardSeqNum: seq, Payload: payload}
 	f.TxID[0] = txidByte
@@ -243,7 +243,7 @@ func TestHandleConnBadMagic(t *testing.T) {
 
 func buildV1TCPFrame(t *testing.T, txidByte byte, payload []byte) []byte {
 	t.Helper()
-	buf := make([]byte, frame.HeaderSizeV1+len(payload))
+	buf := make([]byte, frame.HeaderSizeLegacy+len(payload))
 	// Magic
 	buf[0], buf[1], buf[2], buf[3] = 0xE3, 0xE1, 0xF3, 0xE8
 	// ProtoVer
@@ -280,13 +280,13 @@ func TestHandleConnPayloadTooLarge(t *testing.T) {
 	hdr := make([]byte, frame.HeaderSize)
 	hdr[0], hdr[1], hdr[2], hdr[3] = 0xE3, 0xE1, 0xF3, 0xE8
 	hdr[4], hdr[5] = 0x02, 0xBF
-	hdr[6] = frame.FrameVerV2
-	// PayLen at bytes 80-83: set to MaxPayload + 1
+	hdr[6] = frame.FrameVerBRC123
+	// PayLen at bytes 88-91: set to MaxPayload + 1
 	oversize := uint32(frame.MaxPayload + 1)
-	hdr[80] = byte(oversize >> 24)
-	hdr[81] = byte(oversize >> 16)
-	hdr[82] = byte(oversize >> 8)
-	hdr[83] = byte(oversize)
+	hdr[88] = byte(oversize >> 24)
+	hdr[89] = byte(oversize >> 16)
+	hdr[90] = byte(oversize >> 8)
+	hdr[91] = byte(oversize)
 	dialHandleConn(t, func(conn net.Conn) {
 		_, _ = conn.Write(hdr)
 	})

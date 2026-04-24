@@ -2,9 +2,12 @@
 
 [![CI](https://github.com/lightwebinc/bitcoin-shard-proxy/actions/workflows/ci.yml/badge.svg)](https://github.com/lightwebinc/bitcoin-shard-proxy/actions/workflows/ci.yml)
 
-A high-throughput proxy that receives Bitcoin SV (BSV Blockchain) v2 transaction
-frames over UDP (or TCP for reliable delivery), derives an IPv6 multicast group
-address from the transaction ID, and retransmits to subscribers of the corresponding group. Further traffic segmentation is provided via subtree-level sharding. Reliable delivery to multicast receivers is supported via monotonic transmission flow sequencing.
+A high-throughput proxy that receives Bitcoin SV (BSV Blockchain) transaction
+frames (BRC-123 or legacy v1) over UDP (or TCP for reliable delivery), derives
+an IPv6 multicast group address from the transaction ID, and retransmits to
+subscribers of the corresponding group. Further traffic segmentation is provided
+via subtree-level sharding. Reliable delivery to multicast receivers is supported
+via monotonic transmission flow sequencing.
 
 Inspiration: [Multicast within Multicast: Anycast](https://singulargrit.substack.com/p/multicast-within-multicast-anycast), [Multicast as the Only Viable Architecture](https://singulargrit.substack.com/p/multicast-as-the-only-viable-architecture)
 
@@ -32,7 +35,7 @@ sender  ──UDP/TCP──►  bitcoin-shard-proxy  ──UDP multicast──�
 - Linux kernel 3.9+, FreeBSD 12.3+ (for `SO_REUSEPORT`), MacOS
 - IPv6 enabled on the egress interface(s)
 - Multicast routing / MLD snooping configured for your subscriber fabric
-- Bitcoin SV ingress transaction packets in BRC-12 format (v1) or extended v2 frame format.
+- Bitcoin SV ingress transaction packets in BRC-12 (v1) or BRC-123 frame format.
 
 ## Build
 

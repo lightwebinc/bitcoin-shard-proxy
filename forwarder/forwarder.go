@@ -3,9 +3,9 @@
 //
 // # Hot path
 //
-// [Forwarder.Process] decodes the ingress frame (v1 or v2), derives the
+// [Forwarder.Process] decodes the ingress frame (v1 or BRC-123), derives the
 // multicast group from the TxID, stamps the [frame.Frame.SenderID] field
-// in-place at raw[80:96] for v2 frames (from the ingress source address),
+// in-place at raw[40:44] for BRC-123 frames (CRC32c of ingress source IPv6),
 // then writes the raw bytes to every configured egress target.
 //
 // # Egress socket lifecycle
@@ -16,7 +16,9 @@
 package forwarder
 
 import (
+	"encoding/binary"
 	"fmt"
+	"hash/crc32"
 	"log/slog"
 	"net"
 	"syscall"
@@ -27,6 +29,9 @@ import (
 	"github.com/lightwebinc/bitcoin-shard-common/shard"
 	"github.com/lightwebinc/bitcoin-shard-proxy/metrics"
 )
+
+// crc32cTable is the Castagnoli polynomial table for CRC32c.
+var crc32cTable = crc32.MakeTable(crc32.Castagnoli)
 
 // Target pairs a network interface with its pre-opened multicast egress socket.
 type Target struct {
@@ -106,9 +111,9 @@ func closeTargets(targets []Target, log *slog.Logger) {
 
 // Process is the hot path: decode raw for routing, stamp SenderID, then forward.
 //
-// For v2 frames, raw[80:96] is overwritten in-place with the IPv6 representation
-// of src before the datagram is sent to egress targets. v1 frames are forwarded
-// verbatim. workerID is used only for metrics labels.
+// For BRC-123 frames, raw[40:44] is overwritten in-place with the CRC32c
+// of the source IPv6 address before the datagram is sent to egress targets.
+// v1 frames are forwarded verbatim. workerID is used only for metrics labels.
 func (fw *Forwarder) Process(targets []Target, raw []byte, src net.Addr, workerID int) {
 	f, err := frame.Decode(raw)
 	if err != nil {
@@ -119,9 +124,10 @@ func (fw *Forwarder) Process(targets []Target, raw []byte, src net.Addr, workerI
 		return
 	}
 
-	if f.Version == frame.FrameVerV2 && src != nil {
+	if f.Version == frame.FrameVerBRC123 && src != nil {
 		ip := addrToIPv6(src)
-		copy(raw[80:96], ip[:])
+		senderID := crc32.Checksum(ip[:], crc32cTable)
+		binary.BigEndian.PutUint32(raw[40:44], senderID)
 	}
 
 	groupIdx := fw.engine.GroupIndex(&f.TxID)

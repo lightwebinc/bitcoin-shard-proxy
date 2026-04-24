@@ -2,7 +2,7 @@
 
 ## Overview
 
-bitcoin-shard-proxy receives BSV transaction frames (v1 or v2) over UDP (and
+bitcoin-shard-proxy receives BSV transaction frames (v1 or BRC-123) over UDP (and
 optionally TCP), derives a deterministic multicast group address from each
 transaction's txid, then retransmits the original bytes verbatim to all
 configured egress interfaces.
@@ -50,26 +50,28 @@ tx_c  ──TCP──▶ [tcp conn] ─▶ forwarder ─▶ FF05::2 ──▶ su
 
 ## Wire Format
 
-### v2 (current — 100 bytes, 8-byte aligned, zero padding)
+### BRC-123 (current — 92 bytes)
 
-```
+```text
 Offset  Size  Align  Field
 ------  ----  -----  -----
-     0     4   —     Network magic    0xE3E1F3E8
-     4     2   —     Protocol ver     0x02BF
-     6     1   —     Frame version    0x02
-     7     1   —     Reserved         0x00
-     8    32   8 B   Transaction ID   raw 256-bit txid (internal byte order)
-    40     8   8 B   Shard seq num    uint64 BE; 0 = unset
-    48    32   8 B   Subtree ID       32-byte batch identifier; zeros = unset
-    80    16   8 B   Sender ID        original BSV sender IPv6 (net.IP.To16()); zeros = unset
-    96     4   4 B   Payload length   uint32 BE
-   100     *   —     BSV tx payload
+     0     4   —     Network magic         0xE3E1F3E8
+     4     2   —     Protocol ver          0x02BF
+     6     1   —     Frame version         0x02 (BRC-123)
+     7     1   —     Reserved              0x00
+     8    32   8B    Transaction ID        raw 256-bit txid (internal byte order)
+    40     4   8B    Sender ID             CRC32c of source IPv6; 0 = unset
+    44     4   —     Sequence ID           uint32 BE; random flow identifier; 0 = unset
+    48     4   8B    Shard Sequence Number uint32 BE; monotonic counter; 0 = unset
+    52     4   —     Reserved              padding; must be 0x00000000
+    56    32   8B    Subtree ID            32-byte batch identifier; zeros = unset
+    88     4   8B    Payload length        uint32 BE; max 10 MiB
+    92     *   —     BSV tx payload
 ```
 
 ### v1 BRC-12 (legacy — 44 bytes, accepted, forwarded verbatim)
 
-```
+```text
 Offset  Size  Align  Field            Value / notes
 ------  ----  -----  -----            -------------
      0     4   —     Network magic    0xE3E1F3E8
@@ -81,15 +83,15 @@ Offset  Size  Align  Field            Value / notes
     44     *   —     BSV tx payload   raw serialised transaction bytes
 ```
 
-v1 frames carry no `ShardSeqNum`, `SubtreeID`, or `SenderID` fields beyond
-byte 7. The proxy accepts them and forwards the original bytes unchanged.
+v1 frames carry no `SenderID`, `SequenceID`, `ShardSeqNum`, or `SubtreeID` fields.
+The proxy accepts them and forwards the original bytes unchanged.
 
 ## Hot Path
 
 Every received datagram follows the same path:
 1. `frame.Decode(raw)` — extract the TxID; drop on bad magic or unknown version.
-2. **SenderID stamp (v2 only)** — overwrite `raw[80:96]` in-place with the
-   ingress source address (`net.IP.To16()`). v1 frames are untouched.
+2. **SenderID stamp (BRC-123 only)** — overwrite `raw[40:44]` in-place with the
+   CRC32c (Castagnoli) of the ingress source IPv6 address. v1 frames are untouched.
 3. `WriteTo(raw)` — write the raw bytes to every egress target.
 
 No re-encoding, no per-worker encode buffer.
@@ -125,7 +127,7 @@ Protocol primitives are provided by
 
 ```
 bitcoin-shard-common/
-  frame/             v1/v2 wire format: Decode, Encode, constants, errors
+  frame/             v1/BRC-123 wire format: Decode, Encode, constants, errors
   shard/             txid → group index → IPv6 multicast address derivation
   sequence/          per-shard atomic monotonic counters
 ```

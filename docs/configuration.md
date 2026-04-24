@@ -8,7 +8,7 @@ as fallbacks; hard-coded defaults apply when neither is present.
 | Flag | Env var | Default | Description |
 |---|---|---|---|
 | `-listen` | `LISTEN_ADDR` | `[::]` | Ingress bind address (without port) |
-| `-udp-listen-port` | `UDP_LISTEN_PORT` | `9000` | UDP listen port for incoming BSV v2 transaction frames |
+| `-udp-listen-port` | `UDP_LISTEN_PORT` | `9000` | UDP listen port for incoming BSV transaction frames (v1 or BRC-123) |
 | `-tcp-listen-port` | `TCP_LISTEN_PORT` | `0` | TCP ingress port for reliable delivery (0 = disabled) |
 | `-iface` | `MULTICAST_IF` | `eth0` | Comma-separated NIC names for multicast egress |
 | `-egress-port` | `EGRESS_PORT` | `9001` | Destination UDP port for multicast groups |
@@ -43,9 +43,9 @@ path.
 ### TCP ingress (optional)
 
 TCP ingress provides reliable, ordered delivery for senders that require it
-(e.g. over lossy links). Each accepted connection carries a stream of v1 or v2
+(e.g. over lossy links). Each accepted connection carries a stream of v1 or BRC-123
 frames concatenated end-to-end. The proxy reads 44 bytes first, then extends
-to 100 bytes if v2 (`PayLen` at bytes 96–99), then reads `PayLen` payload bytes.
+to 92 bytes if BRC-123 (`PayLen` at bytes 88–91), then reads `PayLen` payload bytes.
 
 TCP ingress is disabled by default. Enable it with:
 
@@ -84,10 +84,10 @@ Increasing bits by 1 splits every existing group into two child groups
 
 ## Forwarding
 
-For **v2 frames**, the proxy stamps the `SenderID` field (bytes 80–95) in-place
-with the ingress source IPv6 address before forwarding. All other fields,
-including `ShardSeqNum` and `SubtreeID`, are passed through unchanged exactly
-as the sender set them.
+For **BRC-123 frames**, the proxy stamps the `SenderID` field (bytes 40–43)
+in-place with the CRC32c of the ingress source IPv6 address before forwarding.
+All other fields, including `ShardSeqNum` and `SubtreeID`, are passed through
+unchanged exactly as the sender set them.
 
 For **v1 frames**, the proxy forwards the original bytes verbatim without any
 modification.
