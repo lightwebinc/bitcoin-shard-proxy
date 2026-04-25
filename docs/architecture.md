@@ -83,7 +83,7 @@ Offset  Size  Align  Field            Value / notes
     44     *   —     BSV tx payload   raw serialised transaction bytes
 ```
 
-v1 frames carry no `SenderID`, `SequenceID`, `ShardSeqNum`, or `SubtreeID` fields.
+v1 frames carry no `SenderID`, `SequenceID`, `SeqNum`, or `SubtreeID` fields.
 The proxy accepts them and forwards the original bytes unchanged.
 
 ## Hot Path

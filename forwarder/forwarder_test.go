@@ -45,10 +45,10 @@ func makeTargets(t *testing.T, conns ...*net.UDPConn) []Target {
 	return tgts
 }
 
-func buildBRC122Frame(t *testing.T, txidByte0 byte, shardSeqNum uint32, payload []byte) []byte {
+func buildBRC122Frame(t *testing.T, txidByte0 byte, seqNum uint32, payload []byte) []byte {
 	t.Helper()
 	f := &frame.Frame{
-		ShardSeqNum: shardSeqNum,
+		SeqNum: seqNum,
 		Payload:     payload,
 	}
 	f.TxID[0] = txidByte0

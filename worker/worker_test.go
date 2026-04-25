@@ -204,7 +204,7 @@ func dialHandleConn(t *testing.T, write func(net.Conn)) {
 
 func buildTCPFrame(t *testing.T, txidByte byte, seq uint32, payload []byte) []byte {
 	t.Helper()
-	f := &frame.Frame{ShardSeqNum: seq, Payload: payload}
+	f := &frame.Frame{SeqNum: seq, Payload: payload}
 	f.TxID[0] = txidByte
 	buf := make([]byte, frame.HeaderSize+len(payload))
 	n, err := frame.Encode(f, buf)

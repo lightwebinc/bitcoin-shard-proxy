@@ -21,13 +21,13 @@ is not reliably available in containerised or VM-based Linux environments.
 
 The test passes with exit code 0 (`=== PASS ===`) or fails with 1 (`=== FAIL ===`).
 
-| Variable       | Default | Description                                |
-| -------------- | ------- | ------------------------------------------ |
-| `SHARD_BITS`   | `2`     | Shard bit width for the test run           |
-| `RECV_COUNT`   | `4`     | Number of frames expected (= 2^SHARD_BITS) |
-| `UDP_LISTEN_PORT` | `9000` | Proxy UDP ingress port                    |
-| `EGRESS_PORT`  | `9001`  | Proxy egress / receiver listen port        |
-| `METRICS_PORT` | `9100`  | Proxy metrics port (Linux assertion)       |
+| Variable | Default | Description |
+|-------------------|---------|--------------------------------------------|
+| `SHARD_BITS` | `2` | Shard bit width for the test run |
+| `RECV_COUNT` | `4` | Number of frames expected (= 2^SHARD_BITS) |
+| `UDP_LISTEN_PORT` | `9000` | Proxy UDP ingress port |
+| `EGRESS_PORT` | `9001` | Proxy egress / receiver listen port |
+| `METRICS_PORT` | `9100` | Proxy metrics port (Linux assertion) |
 
 ## LXD lab throughput test
 
@@ -93,13 +93,13 @@ prints each frame as it arrives. The `group=` values must match.
 
 ### Flags
 
-| Flag          | Default      | Description                                                        |
-| ------------- | ------------ | ------------------------------------------------------------------ |
-| `-addr`       | `[::1]:9000` | Proxy listen address                                               |
-| `-count`      | `16`         | Frames to send without `-spread`; spread cycles with `-spread` (0 = infinite) |
-| `-interval`   | `200`        | Milliseconds between frames (0 = send as fast as possible)        |
-| `-shard-bits` | `2`          | Must match the proxy's `-shard-bits` (used for group prediction)  |
-| `-spread`     | `false`      | Send one frame per group per cycle with maximally-spaced txids     |
+| Flag | Default | Description |
+|---------------|--------------|-------------------------------------------------------------------------------|
+| `-addr` | `[::1]:9000` | Proxy listen address |
+| `-count` | `16` | Frames to send without `-spread`; spread cycles with `-spread` (0 = infinite) |
+| `-interval` | `200` | Milliseconds between frames (0 = send as fast as possible) |
+| `-shard-bits` | `2` | Must match the proxy's `-shard-bits` (used for group prediction) |
+| `-spread` | `false` | Send one frame per group per cycle with maximally-spaced txids |
 
 ### Modes
 

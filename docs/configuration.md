@@ -5,23 +5,23 @@ as fallbacks; hard-coded defaults apply when neither is present.
 
 ## Flags and Environment Variables
 
-| Flag | Env var | Default | Description |
-|---|---|---|---|
-| `-listen` | `LISTEN_ADDR` | `[::]` | Ingress bind address (without port) |
-| `-udp-listen-port` | `UDP_LISTEN_PORT` | `9000` | UDP listen port for incoming BSV transaction frames (v1 or BRC-122) |
-| `-tcp-listen-port` | `TCP_LISTEN_PORT` | `0` | TCP ingress port for reliable delivery (0 = disabled) |
-| `-iface` | `MULTICAST_IF` | `eth0` | Comma-separated NIC names for multicast egress |
-| `-egress-port` | `EGRESS_PORT` | `9001` | Destination UDP port for multicast groups |
-| `-shard-bits` | `SHARD_BITS` | `2` | Key bit width (1–24) |
-| `-scope` | `MC_SCOPE` | `site` | Multicast scope: `link` \| `site` \| `org` \| `global` |
-| `-mc-base-addr` | `MC_BASE_ADDR` | `""` | Base IPv6 address for assigned multicast address space (bytes 2–12) |
-| `-workers` | `NUM_WORKERS` | `runtime.NumCPU()` | Worker goroutine count (0 = NumCPU) |
-| `-debug` | `DEBUG` | `false` | Enable per-packet debug logging and multicast loopback |
-| `-drain-timeout` | `DRAIN_TIMEOUT` | `0s` | Pre-drain delay before closing sockets; `/readyz` returns 503 during this window (`0s` = disabled) |
-| `-metrics-addr` | `METRICS_ADDR` | `:9100` | HTTP bind address for `/metrics`, `/healthz`, `/readyz` |
-| `-instance` | `INSTANCE_ID` | hostname | OTel `service.instance.id` for federation |
-| `-otlp-endpoint` | `OTLP_ENDPOINT` | `""` | OTLP gRPC endpoint (empty = disabled) |
-| `-otlp-interval` | `OTLP_INTERVAL` | `30s` | OTLP push interval |
+| Flag | Env var | Default | Description |  |  |  |
+|--------------------|-------------------|--------------------|----------------------------------------------------------------------------------------------------|----------|---------|----------|
+| `-listen` | `LISTEN_ADDR` | `[::]` | Ingress bind address (without port) |  |  |  |
+| `-udp-listen-port` | `UDP_LISTEN_PORT` | `9000` | UDP listen port for incoming BSV transaction frames (v1 or BRC-122) |  |  |  |
+| `-tcp-listen-port` | `TCP_LISTEN_PORT` | `0` | TCP ingress port for reliable delivery (0 = disabled) |  |  |  |
+| `-iface` | `MULTICAST_IF` | `eth0` | Comma-separated NIC names for multicast egress |  |  |  |
+| `-egress-port` | `EGRESS_PORT` | `9001` | Destination UDP port for multicast groups |  |  |  |
+| `-shard-bits` | `SHARD_BITS` | `2` | Key bit width (1–24) |  |  |  |
+| `-scope` | `MC_SCOPE` | `site` | Multicast scope: `link` \ | `site` \ | `org` \ | `global` |
+| `-mc-base-addr` | `MC_BASE_ADDR` | `""` | Base IPv6 address for assigned multicast address space (bytes 2–12) |  |  |  |
+| `-workers` | `NUM_WORKERS` | `runtime.NumCPU()` | Worker goroutine count (0 = NumCPU) |  |  |  |
+| `-debug` | `DEBUG` | `false` | Enable per-packet debug logging and multicast loopback |  |  |  |
+| `-drain-timeout` | `DRAIN_TIMEOUT` | `0s` | Pre-drain delay before closing sockets; `/readyz` returns 503 during this window (`0s` = disabled) |  |  |  |
+| `-metrics-addr` | `METRICS_ADDR` | `:9100` | HTTP bind address for `/metrics`, `/healthz`, `/readyz` |  |  |  |
+| `-instance` | `INSTANCE_ID` | hostname | OTel `service.instance.id` for federation |  |  |  |
+| `-otlp-endpoint` | `OTLP_ENDPOINT` | `""` | OTLP gRPC endpoint (empty = disabled) |  |  |  |
+| `-otlp-interval` | `OTLP_INTERVAL` | `30s` | OTLP push interval |  |  |  |
 
 ---
 
@@ -70,7 +70,7 @@ bitcoin-shard-proxy \
 multicast group index. The total number of groups is 2^N.
 
 | Bits | Groups | Typical use |
-|---|---|---|
+|------|------------|--------------------|
 | 1 | 2 | Minimal / testing |
 | 2 | 4 | Default |
 | 8 | 256 | Medium deployments |
@@ -86,7 +86,7 @@ Increasing bits by 1 splits every existing group into two child groups
 
 For **BRC-122 frames**, the proxy stamps the `SenderID` field (bytes 40–43)
 in-place with the CRC32c of the ingress source IPv6 address before forwarding.
-All other fields, including `ShardSeqNum` and `SubtreeID`, are passed through
+All other fields, including `SeqNum` and `SubtreeID`, are passed through
 unchanged exactly as the sender set them.
 
 For **v1 frames**, the proxy forwards the original bytes verbatim without any
@@ -97,7 +97,7 @@ modification.
 ## Multicast Scope
 
 | Value | Prefix | Reach |
-|---|---|---|
+|----------|--------|-----------------------------------------------------|
 | `link` | `FF02` | Same L2 segment only |
 | `site` | `FF05` | Site-local (default; crosses routers within a site) |
 | `org` | `FF08` | Organisation-wide |
