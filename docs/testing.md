@@ -31,7 +31,7 @@ The test passes with exit code 0 (`=== PASS ===`) or fails with 1 (`=== FAIL ===
 
 ## LXD lab throughput test
 
-`perf-test` drives the full stack from outside the VMs: it sends BRC-12 frames to
+`perf-test` drives the full stack from outside the VMs: it sends BRC-124/v2 frames to
 the proxy, scrapes Prometheus metrics before and after, collects `ip -s link` deltas
 from all nodes, captures per-receiver pcaps with `tcpdump`, post-processes them with
 `tshark` to produce a per-group delivery matrix, and writes a Markdown report.

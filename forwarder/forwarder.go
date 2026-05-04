@@ -124,7 +124,7 @@ func (fw *Forwarder) Process(targets []Target, raw []byte, src net.Addr, workerI
 		return
 	}
 
-	if f.Version == frame.FrameVerBRC122 && src != nil {
+	if f.Version == frame.FrameVerV2 && src != nil {
 		ip := addrToIPv6(src)
 		senderID := crc32.Checksum(ip[:], crc32cTable)
 		binary.BigEndian.PutUint32(raw[40:44], senderID)

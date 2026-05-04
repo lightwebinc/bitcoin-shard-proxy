@@ -136,7 +136,7 @@ func (ti *TCPIngress) handleConn(conn net.Conn, targets []forwarder.Target) {
 			hdrSize = frame.HeaderSizeLegacy
 			payLen = int(uint32(hdrBuf[40])<<24 | uint32(hdrBuf[41])<<16 |
 				uint32(hdrBuf[42])<<8 | uint32(hdrBuf[43]))
-		case frame.FrameVerBRC122:
+		case frame.FrameVerV2:
 			// Step 2: read the remaining 48 bytes to complete the 92-byte BRC-124 header
 			// (includes the 4-byte PayLen field at bytes 88–91).
 			if _, err := io.ReadFull(br, hdrBuf[frame.HeaderSizeLegacy:frame.HeaderSize]); err != nil {
