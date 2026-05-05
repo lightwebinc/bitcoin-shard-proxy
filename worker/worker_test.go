@@ -275,3 +275,39 @@ func TestHandleConnMultipleFrames(t *testing.T) {
 		_, _ = io.MultiWriter(conn).Write(append(raw1, raw2...))
 	})
 }
+
+func TestHandleConnV2ThenV1(t *testing.T) {
+	v2 := buildTCPFrame(t, 0xAA, 1, []byte("v2-payload"))
+	v1 := buildV1TCPFrame(t, 0xBB, []byte("v1-payload"))
+	dialHandleConn(t, func(conn net.Conn) {
+		// Write mixed V2+V1 in one stream to exercise the version-switching
+		// read path: the TCP reader must correctly advance past the 92-byte
+		// V2 header+payload and then parse the 44-byte V1 header+payload.
+		buf := append(v2, v1...)
+		_, _ = conn.Write(buf)
+	})
+}
+
+func TestHandleConnV2TruncatedExtension(t *testing.T) {
+	// Write exactly 44 bytes of a V2 header (the legacy prefix) and then
+	// close the connection mid-extension. handleConn must return cleanly
+	// (no panic, no hang).
+	hdr := make([]byte, frame.HeaderSizeLegacy)
+	hdr[0], hdr[1], hdr[2], hdr[3] = 0xE3, 0xE1, 0xF3, 0xE8
+	hdr[4], hdr[5] = 0x02, 0xBF
+	hdr[6] = frame.FrameVerV2
+	dialHandleConn(t, func(conn net.Conn) {
+		_, _ = conn.Write(hdr)
+	})
+}
+
+func TestHandleConnV2LargePayload(t *testing.T) {
+	payload := make([]byte, 64*1024) // 64 KiB
+	for i := range payload {
+		payload[i] = byte(i)
+	}
+	raw := buildTCPFrame(t, 0xCC, 3, payload)
+	dialHandleConn(t, func(conn net.Conn) {
+		_, _ = conn.Write(raw)
+	})
+}
