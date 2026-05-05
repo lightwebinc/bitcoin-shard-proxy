@@ -77,6 +77,89 @@ func makeForwarder() *Forwarder {
 	return New(engine, 9001, false, nil)
 }
 
+// ── PrevSeq/CurSeq stamping ───────────────────────────────────────────────────
+
+func TestProcessV2_StampsSeqChain(t *testing.T) {
+	fw := makeForwarder()
+	src := &net.UDPAddr{IP: net.ParseIP("::1"), Port: 12345}
+
+	// First frame: PrevSeq should be 0 (no predecessor), CurSeq must be non-zero.
+	raw1 := buildV2Frame(t, 0xAB, 0, []byte("p1"))
+	fw.Process(nil, raw1, src, 0)
+
+	prevAfter1 := binary.BigEndian.Uint64(raw1[40:48])
+	curAfter1 := binary.BigEndian.Uint64(raw1[48:56])
+	if prevAfter1 != 0 {
+		t.Errorf("frame 1: PrevSeq = %d, want 0 (first in chain)", prevAfter1)
+	}
+	if curAfter1 == 0 {
+		t.Errorf("frame 1: CurSeq = 0 after stamping, want non-zero")
+	}
+
+	// Second frame from same (sender, group): PrevSeq must equal first CurSeq.
+	raw2 := buildV2Frame(t, 0xAB, 0, []byte("p2"))
+	fw.Process(nil, raw2, src, 0)
+
+	prevAfter2 := binary.BigEndian.Uint64(raw2[40:48])
+	curAfter2 := binary.BigEndian.Uint64(raw2[48:56])
+	if prevAfter2 != curAfter1 {
+		t.Errorf("frame 2: PrevSeq = %d, want %d (frame 1 CurSeq)", prevAfter2, curAfter1)
+	}
+	if curAfter2 == 0 || curAfter2 == curAfter1 {
+		t.Errorf("frame 2: CurSeq = %d, want distinct non-zero value", curAfter2)
+	}
+}
+
+func TestProcessV2_DifferentSenders_IndependentChains(t *testing.T) {
+	fw := makeForwarder()
+	src1 := &net.UDPAddr{IP: net.ParseIP("::1"), Port: 1}
+	src2 := &net.UDPAddr{IP: net.ParseIP("::2"), Port: 2}
+
+	raw1 := buildV2Frame(t, 0xAB, 0, nil)
+	raw2 := buildV2Frame(t, 0xAB, 0, nil)
+	fw.Process(nil, raw1, src1, 0)
+	fw.Process(nil, raw2, src2, 0)
+
+	// Both chains start fresh: both PrevSeq == 0.
+	prev1 := binary.BigEndian.Uint64(raw1[40:48])
+	prev2 := binary.BigEndian.Uint64(raw2[40:48])
+	if prev1 != 0 || prev2 != 0 {
+		t.Errorf("sender1 PrevSeq=%d sender2 PrevSeq=%d, both want 0 (fresh chains)", prev1, prev2)
+	}
+	// CurSeqs will differ because the IP inputs to the hash differ.
+	cur1 := binary.BigEndian.Uint64(raw1[48:56])
+	cur2 := binary.BigEndian.Uint64(raw2[48:56])
+	if cur1 == cur2 {
+		t.Errorf("CurSeq for distinct senders should differ, both got %d", cur1)
+	}
+}
+
+func TestProcessV1_NotStamped(t *testing.T) {
+	fw := makeForwarder()
+	src := &net.UDPAddr{IP: net.ParseIP("::1"), Port: 1}
+
+	v1 := buildV1Frame(t, 0xAB, []byte("v1-payload"))
+	// Bytes 40-47 in a v1 frame hold PayLen; they must NOT be overwritten.
+	payLenBefore := binary.BigEndian.Uint32(v1[40:44])
+	fw.Process(nil, v1, src, 0)
+	payLenAfter := binary.BigEndian.Uint32(v1[40:44])
+	if payLenAfter != payLenBefore {
+		t.Errorf("v1 frame: bytes 40-43 changed (%d → %d); v1 frames must be forwarded verbatim",
+			payLenBefore, payLenAfter)
+	}
+}
+
+func TestProcessV2_NilSrc_NotStamped(t *testing.T) {
+	fw := makeForwarder()
+	raw := buildV2Frame(t, 0xAB, 0xDEAD, nil)
+	// With src==nil the stamping branch is skipped; bytes must remain unchanged.
+	fw.Process(nil, raw, nil, 0)
+	curAfter := binary.BigEndian.Uint64(raw[48:56])
+	if curAfter != 0xDEAD {
+		t.Errorf("nil src: CurSeq = %d, want 0xDEAD (unchanged)", curAfter)
+	}
+}
+
 // ── forward path ─────────────────────────────────────────────────────────────
 
 func TestProcessV2FrameForwardedVerbatim(t *testing.T) {
