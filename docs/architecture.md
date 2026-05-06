@@ -88,9 +88,10 @@ The proxy accepts them and forwards the original bytes unchanged.
 
 Every received datagram follows the same path:
 1. `frame.Decode(raw)` — extract the TxID; drop on bad magic or unknown version.
-2. **PrevSeq/CurSeq stamp (BRC-124 only)** — stamp `raw[40:48]` (PrevSeq) and
-   `raw[48:56]` (CurSeq) in-place with XXH64 hash chain values per
-   `(senderIPv6, groupIdx)`. v1 frames are untouched.
+2. **PrevSeq/CurSeq stamp (BRC-124 only)** — if `raw[48:56]` (CurSeq) is
+   non-zero the sender has pre-stamped the frame; forward verbatim. Otherwise
+   stamp `raw[40:48]` (PrevSeq) and `raw[48:56]` (CurSeq) in-place with XXH64
+   hash chain values per `(senderIPv6, groupIdx)`. v1 frames are always untouched.
 3. `WriteTo(raw)` — write the raw bytes to every egress target.
 
 No re-encoding, no per-worker encode buffer.

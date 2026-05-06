@@ -4,11 +4,16 @@
 // # Hot path
 //
 // [Forwarder.Process] decodes the ingress frame (v1 or BRC-124), derives the
-// multicast group from the TxID, then for BRC-124 frames stamps PrevSeq and
-// CurSeq in-place at raw[40:48] and raw[48:56] using the seqhash package.
-// PrevSeq is the previous CurSeq for this (sender, group) pair; CurSeq is
-// XXH64(senderIPv6 ∥ groupIdx ∥ monotonic_counter). v1 frames are forwarded
-// verbatim.
+// multicast group from the TxID, then for BRC-124 frames conditionally stamps
+// PrevSeq and CurSeq in-place at raw[40:48] and raw[48:56]:
+//
+//   - If CurSeq (raw[48:56]) is already non-zero the sender pre-stamped the
+//     frame; the proxy forwards it verbatim without modification.
+//   - If CurSeq is zero the proxy stamps using the seqhash package:
+//     CurSeq = XXH64(senderIPv6 ∥ groupIdx ∥ monotonic_counter); PrevSeq =
+//     the previous CurSeq for this (sender, group) pair.
+//
+// v1 frames are always forwarded verbatim.
 //
 // # Egress socket lifecycle
 //
@@ -125,11 +130,13 @@ func closeTargets(targets []Target, log *slog.Logger) {
 	}
 }
 
-// Process is the hot path: decode raw for routing, stamp PrevSeq/CurSeq, then forward.
+// Process is the hot path: decode raw for routing, conditionally stamp PrevSeq/CurSeq, then forward.
 //
-// For BRC-124 frames, raw[40:48] (PrevSeq) and raw[48:56] (CurSeq) are stamped
-// in-place using seqhash and a per-(sender, group) monotonic counter.
-// v1 frames are forwarded verbatim. workerID is used only for metrics labels.
+// For BRC-124 frames: if raw[48:56] (CurSeq) is non-zero the sender has
+// pre-stamped the frame and it is forwarded verbatim. If CurSeq is zero the
+// proxy stamps raw[40:48] (PrevSeq) and raw[48:56] (CurSeq) in-place using
+// seqhash and a per-(sender, group) monotonic counter.
+// v1 frames are always forwarded verbatim. workerID is used only for metrics labels.
 func (fw *Forwarder) Process(targets []Target, raw []byte, src net.Addr, workerID int) {
 	f, err := frame.Decode(raw)
 	if err != nil {
@@ -143,10 +150,12 @@ func (fw *Forwarder) Process(targets []Target, raw []byte, src net.Addr, workerI
 	groupIdx := fw.engine.GroupIndex(&f.TxID)
 
 	if f.Version == frame.FrameVerV2 && src != nil {
-		ip := addrToIPv6(src)
-		prevSeq, curSeq := fw.nextSeq(ip, groupIdx)
-		binary.BigEndian.PutUint64(raw[40:48], prevSeq)
-		binary.BigEndian.PutUint64(raw[48:56], curSeq)
+		if binary.BigEndian.Uint64(raw[48:56]) == 0 {
+			ip := addrToIPv6(src)
+			prevSeq, curSeq := fw.nextSeq(ip, groupIdx)
+			binary.BigEndian.PutUint64(raw[40:48], prevSeq)
+			binary.BigEndian.PutUint64(raw[48:56], curSeq)
+		}
 	}
 
 	dst := fw.engine.Addr(groupIdx, fw.egressPort)

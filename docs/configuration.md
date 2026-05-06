@@ -84,15 +84,16 @@ Increasing bits by 1 splits every existing group into two child groups
 
 ## Forwarding
 
-For **BRC-124 frames**, the proxy stamps `PrevSeq` (bytes 40–47) and `CurSeq`
-(bytes 48–55) in-place with XXH64 hash chain values computed per
-`(senderIPv6, groupIdx)` before forwarding. `PrevSeq` equals the previous
-frame's `CurSeq` in the same chain; `CurSeq` is
+For **BRC-124 frames**, if `CurSeq` (bytes 48–55) is already non-zero the
+sender has pre-stamped the frame and the proxy forwards it verbatim. If `CurSeq`
+is zero the proxy stamps `PrevSeq` (bytes 40–47) and `CurSeq` (bytes 48–55)
+in-place with XXH64 hash chain values per `(senderIPv6, groupIdx)`: `PrevSeq`
+equals the previous frame's `CurSeq`; `CurSeq` is
 `XXH64(senderIPv6 ∥ groupIdx ∥ monotonicCounter)`. The `SubtreeID` field is
-passed through unchanged exactly as the sender set it.
+always passed through unchanged.
 
-For **v1 frames**, the proxy forwards the original bytes verbatim without any
-modification.
+For **v1 frames**, the proxy always forwards the original bytes verbatim without
+any modification.
 
 ---
 
