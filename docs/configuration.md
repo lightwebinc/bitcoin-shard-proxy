@@ -84,10 +84,12 @@ Increasing bits by 1 splits every existing group into two child groups
 
 ## Forwarding
 
-For **BRC-124 frames**, the proxy stamps the `SenderID` field (bytes 40–43)
-in-place with the CRC32c of the ingress source IPv6 address before forwarding.
-All other fields, including `SeqNum` and `SubtreeID`, are passed through
-unchanged exactly as the sender set them.
+For **BRC-124 frames**, the proxy stamps `PrevSeq` (bytes 40–47) and `CurSeq`
+(bytes 48–55) in-place with XXH64 hash chain values computed per
+`(senderIPv6, groupIdx)` before forwarding. `PrevSeq` equals the previous
+frame's `CurSeq` in the same chain; `CurSeq` is
+`XXH64(senderIPv6 ∥ groupIdx ∥ monotonicCounter)`. The `SubtreeID` field is
+passed through unchanged exactly as the sender set it.
 
 For **v1 frames**, the proxy forwards the original bytes verbatim without any
 modification.

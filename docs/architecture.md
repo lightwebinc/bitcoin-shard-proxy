@@ -60,10 +60,8 @@ Offset  Size  Align  Field
      6     1   —     Frame version         0x02 (BRC-124)
      7     1   —     Reserved              0x00
      8    32   8B    Transaction ID        raw 256-bit txid (internal byte order)
-    40     4   8B    Sender ID             CRC32c of source IPv6; 0 = unset
-    44     4   —     Sequence ID           uint32 BE; random flow identifier; 0 = unset
-    48     4   8B    Shard Sequence Number uint32 BE; monotonic counter; 0 = unset
-    52     4   —     Reserved              padding; must be 0x00000000
+    40     8   8B    PrevSeq               XXH64 of previous chain state; 0 = unset
+    48     8   8B    CurSeq                XXH64 of current chain state; 0 = unset
     56    32   8B    Subtree ID            32-byte batch identifier; zeros = unset
     88     4   8B    Payload length        uint32 BE
     92     *   —     BSV tx payload
@@ -83,15 +81,16 @@ Offset  Size  Align  Field            Value / notes
     44     *   —     BSV tx payload   raw serialised transaction bytes
 ```
 
-v1 frames carry no `SenderID`, `SequenceID`, `SeqNum`, or `SubtreeID` fields.
+v1 frames carry no `PrevSeq`, `CurSeq`, or `SubtreeID` fields.
 The proxy accepts them and forwards the original bytes unchanged.
 
 ## Hot Path
 
 Every received datagram follows the same path:
 1. `frame.Decode(raw)` — extract the TxID; drop on bad magic or unknown version.
-2. **SenderID stamp (BRC-124 only)** — overwrite `raw[40:44]` in-place with the
-   CRC32c (Castagnoli) of the ingress source IPv6 address. v1 frames are untouched.
+2. **PrevSeq/CurSeq stamp (BRC-124 only)** — stamp `raw[40:48]` (PrevSeq) and
+   `raw[48:56]` (CurSeq) in-place with XXH64 hash chain values per
+   `(senderIPv6, groupIdx)`. v1 frames are untouched.
 3. `WriteTo(raw)` — write the raw bytes to every egress target.
 
 No re-encoding, no per-worker encode buffer.
