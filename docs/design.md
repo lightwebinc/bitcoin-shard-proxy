@@ -5,7 +5,7 @@
 - Should a different hash algorithm be applied to the TXID prior to determining the shard group?
 - What multicast group address should be used for control messages?
 - What frame format should be used for control messages? Should the proxy differentiate?
-- NACK retransmission via multicast retry endpoints: wire protocol finalised (24-byte NACK datagram per BRC-TBD-retransmission); retry endpoint implemented.
+- NACK retransmission via multicast retry endpoints: wire protocol finalised (24-byte NACK datagram per BRC-126); retry endpoint implemented.
 - FEC: deferred — full frame atomicity makes partial repair unproductive; full re-multicast preferred.
 
 ## Roadmap
