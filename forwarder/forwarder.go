@@ -185,6 +185,32 @@ func (fw *Forwarder) Process(targets []Target, raw []byte, src net.Addr, workerI
 	}
 }
 
+// EgressPort returns the configured UDP destination port for multicast egress.
+func (fw *Forwarder) EgressPort() int { return fw.egressPort }
+
+// ForwardControl sends a raw BRC-127 control datagram (e.g. SubtreeAnnounce)
+// to the given control-plane multicast group index on all egress targets.
+// The destination address is derived using [shard.ControlGroupAddr] with the
+// engine's configured scope prefix and middle bytes.
+// Unlike [Process], no sequence stamping or frame decoding is performed.
+func (fw *Forwarder) ForwardControl(targets []Target, raw []byte, ctrlGroupIdx uint32, port int) {
+	dst := shard.ControlGroupAddr(fw.engine.Prefix(), fw.engine.MiddleBytes(), ctrlGroupIdx)
+	addr := &net.UDPAddr{IP: dst, Port: port}
+	for _, tgt := range targets {
+		addr.Zone = tgt.Iface.Name
+		if _, err := tgt.Conn.WriteTo(raw, addr); err != nil {
+			fw.log.Warn("ForwardControl WriteTo error",
+				"iface", tgt.Iface.Name, "dst", addr, "err", err)
+		}
+	}
+	if fw.debug {
+		fw.log.Debug("control forwarded",
+			"ctrl_group", fmt.Sprintf("0x%06X", ctrlGroupIdx),
+			"dst", addr,
+		)
+	}
+}
+
 // nextSeq returns (prevSeq, curSeq) for the given (sender IP, group) pair,
 // advancing the per-chain monotonic counter atomically.
 func (fw *Forwarder) nextSeq(ip [16]byte, groupIdx uint32) (prevSeq, curSeq uint64) {

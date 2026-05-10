@@ -27,6 +27,7 @@ import (
 	"sync"
 
 	"github.com/lightwebinc/bitcoin-shard-common/frame"
+	"github.com/lightwebinc/bitcoin-shard-common/shard"
 	"github.com/lightwebinc/bitcoin-shard-proxy/forwarder"
 	"github.com/lightwebinc/bitcoin-shard-proxy/metrics"
 )
@@ -132,6 +133,17 @@ func (ti *TCPIngress) handleConn(conn net.Conn, targets []forwarder.Target) {
 
 		var hdrSize, payLen int
 		switch hdrBuf[6] {
+		case frame.MsgTypeSubtreeAnnounce:
+			// BRC-127 SubtreeAnnounce: 64-byte fixed datagram.
+			// 44 bytes already read; read the remaining 20 bytes.
+			var ctrlBuf [frame.SubtreeAnnounceSize]byte
+			copy(ctrlBuf[:frame.HeaderSizeLegacy], hdrBuf[:frame.HeaderSizeLegacy])
+			if _, err := io.ReadFull(br, ctrlBuf[frame.HeaderSizeLegacy:frame.SubtreeAnnounceSize]); err != nil {
+				ti.log.Debug("TCP read SubtreeAnnounce extension error", "remote", remote, "err", err)
+				return
+			}
+			ti.fwd.ForwardControl(targets, ctrlBuf[:], shard.CtrlGroupSubtreeAnnounce, ti.fwd.EgressPort())
+			continue
 		case frame.FrameVerV1:
 			hdrSize = frame.HeaderSizeLegacy
 			payLen = int(uint32(hdrBuf[40])<<24 | uint32(hdrBuf[41])<<16 |
