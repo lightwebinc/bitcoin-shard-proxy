@@ -24,5 +24,9 @@ documented in [docs/architecture.md](architecture.md) and
 - **TCP ingress** — frames may arrive over TCP as well as UDP; the proxy reads
   the v1/BRC-124 header to determine frame boundaries and dispatches to the same
   forwarding pipeline.
+- **BRC-127 SubtreeAnnounce forwarding** — when a TCP client sends a frame with
+  `MsgType 0x30` (SubtreeAnnounce), the proxy forwards the 64-byte datagram to
+  the `CtrlGroupSubtreeAnnounce` (`0xFFFFFC`) control-plane multicast group
+  without sequence stamping.
 - **Error handling** — bad magic, unknown version, oversized payload, and
   truncated datagrams are dropped and counted in `bsp_packets_dropped_total`.

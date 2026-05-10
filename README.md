@@ -3,11 +3,12 @@
 [![CI](https://github.com/lightwebinc/bitcoin-shard-proxy/actions/workflows/ci.yml/badge.svg)](https://github.com/lightwebinc/bitcoin-shard-proxy/actions/workflows/ci.yml)
 
 A high-throughput proxy that receives Bitcoin SV (BSV Blockchain) transaction
-frames (BRC-124 or legacy v1) over UDP (or TCP for reliable delivery), derives
+frames (BRC-124 or legacy BRC-12) over UDP (or TCP for reliable delivery), derives
 an IPv6 multicast group address from the transaction ID, and retransmits to
 subscribers of the corresponding group. Further traffic segmentation is provided
 via subtree-level sharding. Reliable delivery to multicast receivers is supported
-via monotonic transmission flow sequencing.
+via monotonic transmission flow sequencing. The TCP ingress also forwards
+BRC-127 SubtreeAnnounce datagrams to the control-plane multicast group.
 
 Inspiration: [Multicast within Multicast: Anycast](https://singulargrit.substack.com/p/multicast-within-multicast-anycast), [Multicast as the Only Viable Architecture](https://singulargrit.substack.com/p/multicast-as-the-only-viable-architecture)
 
@@ -27,7 +28,7 @@ sender  ──UDP/TCP──►  bitcoin-shard-proxy  ──UDP multicast──�
 
 ## Dependencies
 
-- [`github.com/lightwebinc/bitcoin-shard-common`](https://github.com/lightwebinc/bitcoin-shard-common) — `frame`, `shard`, `sequence` packages
+- [`github.com/lightwebinc/bitcoin-shard-common`](https://github.com/lightwebinc/bitcoin-shard-common) — `frame`, `shard`, `seqhash` packages
 
 ## Requirements
 

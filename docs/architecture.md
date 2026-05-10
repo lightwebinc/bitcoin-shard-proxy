@@ -129,5 +129,5 @@ Protocol primitives are provided by
 bitcoin-shard-common/
   frame/             v1/BRC-124 wire format: Decode, Encode, constants, errors
   shard/             txid → group index → IPv6 multicast address derivation
-  sequence/          per-shard atomic monotonic counters
+  seqhash/           XXH64-based hash chain stamping
 ```
