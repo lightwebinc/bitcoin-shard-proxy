@@ -8,7 +8,7 @@ as fallbacks; hard-coded defaults apply when neither is present.
 | Flag | Env var | Default | Description |  |  |  |
 |--------------------|-------------------|--------------------|----------------------------------------------------------------------------------------------------|----------|---------|----------|
 | `-listen` | `LISTEN_ADDR` | `[::]` | Ingress bind address (without port) |  |  |  |
-| `-udp-listen-port` | `UDP_LISTEN_PORT` | `9000` | UDP listen port for incoming BSV transaction frames (v1 or BRC-124) |  |  |  |
+| `-udp-listen-port` | `UDP_LISTEN_PORT` | `9000` | UDP listen port for incoming BSV transaction frames (BRC-12, BRC-124, or BRC-128) |  |  |  |
 | `-tcp-listen-port` | `TCP_LISTEN_PORT` | `0` | TCP ingress port for reliable delivery (0 = disabled) |  |  |  |
 | `-iface` | `MULTICAST_IF` | `eth0` | Comma-separated NIC names for multicast egress |  |  |  |
 | `-egress-port` | `EGRESS_PORT` | `9001` | Destination UDP port for multicast groups |  |  |  |
@@ -43,7 +43,7 @@ path.
 ### TCP ingress (optional)
 
 TCP ingress provides reliable, ordered delivery for senders that require it
-(e.g. over lossy links). Each accepted connection carries a stream of v1 or BRC-124
+(e.g. over lossy links). Each accepted connection carries a stream of BRC-12, BRC-124, or BRC-128
 frames concatenated end-to-end. The proxy reads 44 bytes first, then extends
 to 92 bytes if BRC-124 (`PayLen` at bytes 88–91), then reads `PayLen` payload bytes.
 
@@ -84,7 +84,7 @@ Increasing bits by 1 splits every existing group into two child groups
 
 ## Forwarding
 
-For **BRC-124 frames**, if `CurSeq` (bytes 48–55) is already non-zero the
+For **BRC-124/BRC-128 frames**, if `CurSeq` (bytes 48–55) is already non-zero the
 sender has pre-stamped the frame and the proxy forwards it verbatim. If `CurSeq`
 is zero the proxy stamps `PrevSeq` (bytes 40–47) and `CurSeq` (bytes 48–55)
 in-place with XXH64 hash chain values per `(senderIPv6, groupIdx)`: `PrevSeq`
@@ -92,7 +92,7 @@ equals the previous frame's `CurSeq`; `CurSeq` is
 `XXH64(senderIPv6 ∥ groupIdx ∥ monotonicCounter)`. The `SubtreeID` field is
 always passed through unchanged.
 
-For **v1 frames**, the proxy always forwards the original bytes verbatim without
+For **BRC-12 (legacy) frames**, the proxy always forwards the original bytes verbatim without
 any modification.
 
 ---

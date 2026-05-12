@@ -139,12 +139,12 @@ func TestProcessV1_NotStamped(t *testing.T) {
 	src := &net.UDPAddr{IP: net.ParseIP("::1"), Port: 1}
 
 	v1 := buildV1Frame(t, 0xAB, []byte("v1-payload"))
-	// Bytes 40-47 in a v1 frame hold PayLen; they must NOT be overwritten.
+	// Bytes 40-47 in a BRC-12 frame hold PayLen; they must NOT be overwritten.
 	payLenBefore := binary.BigEndian.Uint32(v1[40:44])
 	fw.Process(nil, v1, src, 0)
 	payLenAfter := binary.BigEndian.Uint32(v1[40:44])
 	if payLenAfter != payLenBefore {
-		t.Errorf("v1 frame: bytes 40-43 changed (%d → %d); v1 frames must be forwarded verbatim",
+		t.Errorf("BRC-12 frame: bytes 40-43 changed (%d → %d); BRC-12 frames must be forwarded verbatim",
 			payLenBefore, payLenAfter)
 	}
 }
@@ -189,7 +189,7 @@ func TestProcessV1FrameForwardedVerbatim(t *testing.T) {
 	fw := makeForwarder()
 	conn, _ := openLoopbackUDP(t)
 	v1 := buildV1Frame(t, 0xAB, nil)
-	// v1 frames are forwarded verbatim; must not panic.
+	// BRC-12 frames are forwarded verbatim; must not panic.
 	fw.Process(makeTargets(t, conn), v1, fakeAddr{}, 0)
 }
 

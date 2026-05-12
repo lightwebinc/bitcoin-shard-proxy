@@ -248,7 +248,7 @@ func buildV1TCPFrame(t *testing.T, txidByte byte, payload []byte) []byte {
 	buf[0], buf[1], buf[2], buf[3] = 0xE3, 0xE1, 0xF3, 0xE8
 	// ProtoVer
 	buf[4], buf[5] = 0x02, 0xBF
-	// FrameVer v1
+	// FrameVer BRC-12 (legacy)
 	buf[6] = frame.FrameVerV1
 	// TxID[0]
 	buf[8] = txidByte
@@ -280,9 +280,9 @@ func TestHandleConnV2ThenV1(t *testing.T) {
 	v2 := buildTCPFrame(t, 0xAA, 1, []byte("v2-payload"))
 	v1 := buildV1TCPFrame(t, 0xBB, []byte("v1-payload"))
 	dialHandleConn(t, func(conn net.Conn) {
-		// Write mixed V2+V1 in one stream to exercise the version-switching
+		// Write mixed BRC-124+BRC-12 in one stream to exercise the version-switching
 		// read path: the TCP reader must correctly advance past the 92-byte
-		// V2 header+payload and then parse the 44-byte V1 header+payload.
+		// BRC-124 header+payload and then parse the 44-byte BRC-12 header+payload.
 		buf := append(v2, v1...)
 		_, _ = conn.Write(buf)
 	})

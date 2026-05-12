@@ -3,19 +3,19 @@
 //
 // # Protocol
 //
-// Each TCP connection carries a stream of v1 or BRC-124 frames with no framing
-// envelope. The proxy reads the minimum header first (44 bytes for v1,
-// extended to 92 for BRC-124), then reads the declared payload:
+// Each TCP connection carries a stream of BRC-12, BRC-124, or BRC-128 frames with no framing
+// envelope. The proxy reads the minimum header first (44 bytes for BRC-12,
+// extended to 92 for BRC-124/BRC-128), then reads the declared payload:
 //
 //  1. Read [frame.HeaderSizeLegacy] (44) bytes — enough to see the version byte
-//     and, for v1, the PayLen field.
-//  2. If FrameVer == BRC-124: read 48 more bytes to complete the 92-byte header
+//     and, for BRC-12, the PayLen field.
+//  2. If FrameVer == BRC-124/BRC-128: read 48 more bytes to complete the 92-byte header
 //     (bytes 44–91), which includes the 4-byte PayLen field at bytes 88–91.
 //  3. Read PayLen bytes of payload.
 //  4. Forward assembled frame to [forwarder.Forwarder.Process].
 //
 // A [bufio.Reader] (64 KiB) absorbs kernel round-trips under burst load.
-// v1 and BRC-124 frames are forwarded verbatim.
+// BRC-12, BRC-124, and BRC-128 frames are forwarded verbatim.
 package worker
 
 import (
@@ -34,7 +34,7 @@ import (
 
 const tcpBufSize = 64 * 1024 // 64 KiB read buffer per TCP connection
 
-// TCPIngress listens for TCP connections carrying a stream of v1 or BRC-124 frames
+// TCPIngress listens for TCP connections carrying a stream of BRC-12, BRC-124, or BRC-128 frames
 // and forwards each frame via the shared [forwarder.Forwarder].
 type TCPIngress struct {
 	fwd    *forwarder.Forwarder
@@ -106,7 +106,7 @@ func (ti *TCPIngress) Run(listenAddr string, listenPort int, done <-chan struct{
 	}
 }
 
-// handleConn reads a stream of v1 or BRC-124 frames from conn and forwards each.
+// handleConn reads a stream of BRC-12, BRC-124, or BRC-128 frames from conn and forwards each.
 // The connection is closed on any read error or protocol violation.
 // Each goroutine owns its own encode and assembly buffers.
 func (ti *TCPIngress) handleConn(conn net.Conn, targets []forwarder.Target) {
@@ -118,8 +118,8 @@ func (ti *TCPIngress) handleConn(conn net.Conn, targets []forwarder.Target) {
 	hdrBuf := make([]byte, frame.HeaderSize)
 
 	for {
-		// Step 1: read the v1 minimum header (44 bytes). This covers both
-		// v1 (complete header) and the leading 44 bytes of a BRC-124 header.
+		// Step 1: read the minimum header (44 bytes). This covers both
+		// BRC-12 (complete header) and the leading 44 bytes of a BRC-124/BRC-128 header.
 		if _, err := io.ReadFull(br, hdrBuf[:frame.HeaderSizeLegacy]); err != nil {
 			if err != io.EOF && !isClosedErr(err) {
 				ti.log.Debug("TCP read header error", "remote", remote, "err", err)
@@ -155,10 +155,10 @@ func (ti *TCPIngress) handleConn(conn net.Conn, targets []forwarder.Target) {
 			payLen = int(uint32(hdrBuf[40])<<24 | uint32(hdrBuf[41])<<16 |
 				uint32(hdrBuf[42])<<8 | uint32(hdrBuf[43]))
 		case frame.FrameVerV2:
-			// Step 2: read the remaining 48 bytes to complete the 92-byte BRC-124 header
+			// Step 2: read the remaining 48 bytes to complete the 92-byte BRC-124/BRC-128 header
 			// (includes the 4-byte PayLen field at bytes 88–91).
 			if _, err := io.ReadFull(br, hdrBuf[frame.HeaderSizeLegacy:frame.HeaderSize]); err != nil {
-				ti.log.Debug("TCP read BRC-124 header extension error", "remote", remote, "err", err)
+				ti.log.Debug("TCP read v2 header extension error", "remote", remote, "err", err)
 				return
 			}
 			hdrSize = frame.HeaderSize
