@@ -52,7 +52,7 @@ var Scopes = map[string]uint16{
 type Config struct {
 	// Network
 	ListenAddr    string   // e.g. "[::]"
-	UDPListenPort int      // UDP port to receive BSV v2 transaction frames
+	UDPListenPort int      // UDP port to receive BSV BRC-124/BRC-128 transaction frames
 	TCPListenPort int      // TCP ingress port; 0 = disabled
 	EgressIfaces  []string // NIC names for multicast egress, e.g. ["eth0", "eth1"]
 	EgressPort    int      // Destination UDP port written into outgoing multicast datagrams
@@ -89,7 +89,7 @@ func Load() (*Config, error) {
 	flag.StringVar(&c.ListenAddr, "listen", envStr("LISTEN_ADDR", "[::]"),
 		"ingress bind address (without port)")
 	flag.IntVar(&c.UDPListenPort, "udp-listen-port", envInt("UDP_LISTEN_PORT", 9000),
-		"UDP listen port for incoming BSV v2 transaction frames")
+		"UDP listen port for incoming BSV BRC-124/BRC-128 transaction frames")
 	flag.IntVar(&c.TCPListenPort, "tcp-listen-port", envInt("TCP_LISTEN_PORT", 0),
 		"TCP ingress port for reliable frame delivery (0 = disabled)")
 	ifaceFlag := flag.String("iface", envStr("MULTICAST_IF", "eth0"),

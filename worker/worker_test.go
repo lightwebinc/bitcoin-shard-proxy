@@ -289,7 +289,7 @@ func TestHandleConnV2ThenV1(t *testing.T) {
 }
 
 func TestHandleConnV2TruncatedExtension(t *testing.T) {
-	// Write exactly 44 bytes of a V2 header (the legacy prefix) and then
+	// Write exactly 44 bytes of a BRC-124 header (the legacy prefix) and then
 	// close the connection mid-extension. handleConn must return cleanly
 	// (no panic, no hang).
 	hdr := make([]byte, frame.HeaderSizeLegacy)

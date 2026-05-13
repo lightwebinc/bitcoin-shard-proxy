@@ -158,7 +158,7 @@ func (ti *TCPIngress) handleConn(conn net.Conn, targets []forwarder.Target) {
 			// Step 2: read the remaining 48 bytes to complete the 92-byte BRC-124/BRC-128 header
 			// (includes the 4-byte PayLen field at bytes 88–91).
 			if _, err := io.ReadFull(br, hdrBuf[frame.HeaderSizeLegacy:frame.HeaderSize]); err != nil {
-				ti.log.Debug("TCP read v2 header extension error", "remote", remote, "err", err)
+				ti.log.Debug("TCP read BRC-124/BRC-128 header extension error", "remote", remote, "err", err)
 				return
 			}
 			hdrSize = frame.HeaderSize
