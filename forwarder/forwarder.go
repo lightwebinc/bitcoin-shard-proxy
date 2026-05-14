@@ -10,8 +10,10 @@
 //   - If CurSeq (raw[48:56]) is already non-zero the sender pre-stamped the
 //     frame; the proxy forwards it verbatim without modification.
 //   - If CurSeq is zero the proxy stamps using the seqhash package:
-//     CurSeq = XXH64(senderIPv6 ∥ groupIdx ∥ monotonic_counter); PrevSeq =
-//     the previous CurSeq for this (sender, group) pair.
+//     CurSeq = XXH64(senderIPv6 ∥ groupIdx ∥ subtreeID ∥ monotonic_counter);
+//     PrevSeq = the previous CurSeq for this (sender, group, subtree)
+//     triple. Each subtree therefore runs an independent chain so loss in
+//     one subtree cannot create false gaps in another.
 //
 // BRC-12 frames are always forwarded verbatim.
 //
@@ -38,14 +40,15 @@ import (
 	"github.com/lightwebinc/bitcoin-shard-proxy/metrics"
 )
 
-// senderGroupKey identifies a unique (sender IPv6, multicast group) chain.
-type senderGroupKey struct {
+// chainKey identifies a unique (sender IPv6, multicast group, subtree) chain.
+type chainKey struct {
 	ip  [16]byte
 	grp uint32
+	sub [32]byte
 }
 
-// senderGroupState holds the monotonic counter and last CurSeq for one chain.
-type senderGroupState struct {
+// chainState holds the monotonic counter and last CurSeq for one chain.
+type chainState struct {
 	counter uint64
 	curSeq  uint64
 }
@@ -68,7 +71,7 @@ type Forwarder struct {
 	log        *slog.Logger
 
 	mu     sync.Mutex
-	chains map[senderGroupKey]*senderGroupState
+	chains map[chainKey]*chainState
 }
 
 // New creates a Forwarder. No sockets are opened here; call [OpenTargets] in
@@ -89,7 +92,7 @@ func New(engine *shard.Engine, mcPrefix uint16, mcGroupID uint16, egressPort int
 		debug:      debug,
 		rec:        rec,
 		log:        slog.Default().With("component", "forwarder"),
-		chains:     make(map[senderGroupKey]*senderGroupState),
+		chains:     make(map[chainKey]*chainState),
 	}
 }
 
@@ -140,7 +143,8 @@ func closeTargets(targets []Target, log *slog.Logger) {
 // For BRC-124/BRC-128 frames: if raw[48:56] (CurSeq) is non-zero the sender has
 // pre-stamped the frame and it is forwarded verbatim. If CurSeq is zero the
 // proxy stamps raw[40:48] (PrevSeq) and raw[48:56] (CurSeq) in-place using
-// seqhash and a per-(sender, group) monotonic counter.
+// seqhash and a per-(sender, group, subtree) monotonic counter so each
+// subtree owns an independent chain (BRC-124 §1.2).
 // BRC-12 frames are always forwarded verbatim. workerID is used only for metrics labels.
 func (fw *Forwarder) Process(targets []Target, raw []byte, src net.Addr, workerID int) {
 	f, err := frame.Decode(raw)
@@ -157,7 +161,7 @@ func (fw *Forwarder) Process(targets []Target, raw []byte, src net.Addr, workerI
 	if f.Version == frame.FrameVerV2 && src != nil {
 		if binary.BigEndian.Uint64(raw[48:56]) == 0 {
 			ip := addrToIPv6(src)
-			prevSeq, curSeq := fw.nextSeq(ip, groupIdx)
+			prevSeq, curSeq := fw.nextSeq(ip, groupIdx, f.SubtreeID)
 			binary.BigEndian.PutUint64(raw[40:48], prevSeq)
 			binary.BigEndian.PutUint64(raw[48:56], curSeq)
 		}
@@ -233,19 +237,19 @@ func ctrlGroupName(idx uint16) string {
 	}
 }
 
-// nextSeq returns (prevSeq, curSeq) for the given (sender IP, group) pair,
-// advancing the per-chain monotonic counter atomically.
-func (fw *Forwarder) nextSeq(ip [16]byte, groupIdx uint32) (prevSeq, curSeq uint64) {
-	key := senderGroupKey{ip: ip, grp: groupIdx}
+// nextSeq returns (prevSeq, curSeq) for the given (sender IP, group, subtree)
+// triple, advancing the per-chain monotonic counter atomically.
+func (fw *Forwarder) nextSeq(ip [16]byte, groupIdx uint32, subtreeID [32]byte) (prevSeq, curSeq uint64) {
+	key := chainKey{ip: ip, grp: groupIdx, sub: subtreeID}
 	fw.mu.Lock()
 	st, ok := fw.chains[key]
 	if !ok {
-		st = &senderGroupState{}
+		st = &chainState{}
 		fw.chains[key] = st
 	}
 	st.counter++
 	prevSeq = st.curSeq
-	st.curSeq = seqhash.Hash(ip, groupIdx, st.counter)
+	st.curSeq = seqhash.Hash(ip, groupIdx, subtreeID, st.counter)
 	curSeq = st.curSeq
 	fw.mu.Unlock()
 	return prevSeq, curSeq

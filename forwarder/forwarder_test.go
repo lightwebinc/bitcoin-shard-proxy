@@ -47,9 +47,15 @@ func makeTargets(t *testing.T, conns ...*net.UDPConn) []Target {
 
 func buildV2Frame(t *testing.T, txidByte0 byte, curSeq uint64, payload []byte) []byte {
 	t.Helper()
+	return buildV2FrameSub(t, txidByte0, curSeq, [32]byte{}, payload)
+}
+
+func buildV2FrameSub(t *testing.T, txidByte0 byte, curSeq uint64, sub [32]byte, payload []byte) []byte {
+	t.Helper()
 	f := &frame.Frame{
-		CurSeq:  curSeq,
-		Payload: payload,
+		CurSeq:    curSeq,
+		SubtreeID: sub,
+		Payload:   payload,
 	}
 	f.TxID[0] = txidByte0
 	buf := make([]byte, frame.HeaderSize+len(payload))
@@ -131,6 +137,44 @@ func TestProcessV2_DifferentSenders_IndependentChains(t *testing.T) {
 	cur2 := binary.BigEndian.Uint64(raw2[48:56])
 	if cur1 == cur2 {
 		t.Errorf("CurSeq for distinct senders should differ, both got %d", cur1)
+	}
+}
+
+func TestProcessV2_DistinctSubtrees_IndependentChains(t *testing.T) {
+	fw := makeForwarder()
+	src := &net.UDPAddr{IP: net.ParseIP("::1"), Port: 1}
+
+	var subA, subB [32]byte
+	subA[0] = 0xAA
+	subB[0] = 0xBB
+
+	// Interleave two subtree streams under the same (sender, group). Each
+	// subtree must run an independent chain — both PrevSeq values for the
+	// FIRST frame of each subtree must be 0.
+	rawA1 := buildV2FrameSub(t, 0xAB, 0, subA, nil)
+	rawB1 := buildV2FrameSub(t, 0xAB, 0, subB, nil)
+	rawA2 := buildV2FrameSub(t, 0xAB, 0, subA, nil)
+	fw.Process(nil, rawA1, src, 0)
+	fw.Process(nil, rawB1, src, 0)
+	fw.Process(nil, rawA2, src, 0)
+
+	prevA1 := binary.BigEndian.Uint64(rawA1[40:48])
+	prevB1 := binary.BigEndian.Uint64(rawB1[40:48])
+	curA1 := binary.BigEndian.Uint64(rawA1[48:56])
+	prevA2 := binary.BigEndian.Uint64(rawA2[40:48])
+	curB1 := binary.BigEndian.Uint64(rawB1[48:56])
+
+	if prevA1 != 0 {
+		t.Errorf("subtree A frame 1: PrevSeq = %d, want 0", prevA1)
+	}
+	if prevB1 != 0 {
+		t.Errorf("subtree B frame 1: PrevSeq = %d, want 0 (independent chain)", prevB1)
+	}
+	if prevA2 != curA1 {
+		t.Errorf("subtree A frame 2: PrevSeq = %d, want %d (chain to A frame 1, not B)", prevA2, curA1)
+	}
+	if curA1 == curB1 {
+		t.Errorf("subtree A and B share CurSeq %d — chains are not isolated", curA1)
 	}
 }
 
