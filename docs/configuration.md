@@ -84,13 +84,12 @@ Increasing bits by 1 splits every existing group into two child groups
 
 ## Forwarding
 
-For **BRC-124/BRC-128 frames**, if `CurSeq` (bytes 48–55) is already non-zero the
-sender has pre-stamped the frame and the proxy forwards it verbatim. If `CurSeq`
-is zero the proxy stamps `PrevSeq` (bytes 40–47) and `CurSeq` (bytes 48–55)
-in-place with XXH64 hash chain values per `(senderIPv6, groupIdx)`: `PrevSeq`
-equals the previous frame's `CurSeq`; `CurSeq` is
-`XXH64(senderIPv6 ∥ groupIdx ∥ monotonicCounter)`. The `SubtreeID` field is
-always passed through unchanged.
+For **BRC-124/BRC-128 frames**, if `SeqNum` (bytes 48–55) is already non-zero the
+sender has pre-stamped the frame and the proxy forwards it verbatim. If `SeqNum`
+is zero the proxy stamps `HashKey` (bytes 40–47) as
+`XXH64(senderIPv6 ∥ groupIdx ∥ subtreeID)` and `SeqNum` (bytes 48–55) as a
+monotonic per-flow counter, in-place. The `SubtreeID` field is always passed
+through unchanged.
 
 For **BRC-12 (legacy) frames**, the proxy always forwards the original bytes verbatim without
 any modification.

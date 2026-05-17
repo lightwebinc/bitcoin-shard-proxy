@@ -45,9 +45,9 @@ func makeTargets(t *testing.T, conns ...*net.UDPConn) []Target {
 	return tgts
 }
 
-func buildV2Frame(t *testing.T, txidByte0 byte, curSeq uint64, payload []byte) []byte {
+func buildV2Frame(t *testing.T, txidByte0 byte, seqNum uint64, payload []byte) []byte {
 	t.Helper()
-	return buildV2FrameSub(t, txidByte0, curSeq, [32]byte{}, payload)
+	return buildV2FrameSub(t, txidByte0, seqNum, [32]byte{}, payload)
 }
 
 func buildV2FrameSub(t *testing.T, txidByte0 byte, seqNum uint64, sub [32]byte, payload []byte) []byte {

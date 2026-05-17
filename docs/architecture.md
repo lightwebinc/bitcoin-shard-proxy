@@ -61,8 +61,8 @@ Offset  Size  Align  Field
      6     1   —     Frame version         0x02 (BRC-124/BRC-128)
      7     1   —     Reserved              0x00
      8    32   8B    Transaction ID        raw 256-bit txid (internal byte order)
-    40     8   8B    PrevSeq               XXH64 of previous chain state; 0 = unset
-    48     8   8B    CurSeq                XXH64 of current chain state; 0 = unset
+    40     8   8B    HashKey               stable per-flow XXH64 identifier; 0 = unset
+    48     8   8B    SeqNum                monotonic per-flow counter; 0 = unset
     56    32   8B    Subtree ID            32-byte batch identifier; zeros = unset
     88     4   8B    Payload length        uint32 BE
     92     *   —     BSV tx payload        BRC-12 raw or BRC-30 EF (BRC-128)
@@ -82,18 +82,18 @@ Offset  Size  Align  Field            Value / notes
     44     *   —     BSV tx payload   raw serialised transaction bytes
 ```
 
-BRC-12 frames carry no `PrevSeq`, `CurSeq`, or `SubtreeID` fields.
+BRC-12 frames carry no `HashKey`, `SeqNum`, or `SubtreeID` fields.
 The proxy accepts them and forwards the original bytes unchanged.
 
 ## Hot Path
 
 Every received datagram follows the same path:
 1. `frame.Decode(raw)` — extract the TxID; drop on bad magic or unknown version.
-2. **PrevSeq/CurSeq stamp (BRC-124/BRC-128 only)** — if `raw[48:56]` (CurSeq) is
+2. **HashKey/SeqNum stamp (BRC-124/BRC-128 only)** — if `raw[48:56]` (SeqNum) is
    non-zero the sender has pre-stamped the frame; forward verbatim. Otherwise
-   stamp `raw[40:48]` (PrevSeq) and `raw[48:56]` (CurSeq) in-place with XXH64
-   hash chain values per `(senderIPv6, groupIdx, subtreeID)`. BRC-12 frames are
-   always untouched.
+   stamp `raw[40:48]` (HashKey) as `XXH64(senderIPv6 ∥ groupIdx ∥ subtreeID)` and
+   `raw[48:56]` (SeqNum) as a monotonic per-flow counter, in-place. BRC-12 frames
+   are always untouched.
 3. `WriteTo(raw)` — write the raw bytes to every egress target.
 
 No re-encoding, no per-worker encode buffer.
