@@ -5,15 +5,14 @@
 //
 // [Forwarder.Process] decodes the ingress frame (BRC-12, BRC-124, or BRC-128), derives the
 // multicast group from the TxID, then for BRC-124/BRC-128 frames conditionally stamps
-// PrevSeq and CurSeq in-place at raw[40:48] and raw[48:56]:
+// HashKey and SeqNum in-place at raw[40:48] and raw[48:56]:
 //
-//   - If CurSeq (raw[48:56]) is already non-zero the sender pre-stamped the
+//   - If SeqNum (raw[48:56]) is already non-zero the sender pre-stamped the
 //     frame; the proxy forwards it verbatim without modification.
-//   - If CurSeq is zero the proxy stamps using the seqhash package:
-//     CurSeq = XXH64(senderIPv6 ∥ groupIdx ∥ subtreeID ∥ monotonic_counter);
-//     PrevSeq = the previous CurSeq for this (sender, group, subtree)
-//     triple. Each subtree therefore runs an independent chain so loss in
-//     one subtree cannot create false gaps in another.
+//   - If SeqNum is zero the proxy stamps: HashKey = XXH64(senderIPv6 ∥ groupIdx ∥ subtreeID)
+//     (stable per flow); SeqNum = per-(sender, group, subtree) monotonic counter
+//     starting at 1. Each subtree therefore owns an independent sequence so
+//     loss in one subtree cannot create false gaps in another.
 //
 // BRC-12 frames are always forwarded verbatim.
 //
@@ -47,10 +46,9 @@ type chainKey struct {
 	sub [32]byte
 }
 
-// chainState holds the monotonic counter and last CurSeq for one chain.
-type chainState struct {
+// flowState holds the monotonic per-flow SeqNum counter.
+type flowState struct {
 	counter uint64
-	curSeq  uint64
 }
 
 // Target pairs a network interface with its pre-opened multicast egress socket.
@@ -60,7 +58,7 @@ type Target struct {
 }
 
 // Forwarder decodes ingress frames (BRC-12 or BRC-124/BRC-128), derives the multicast
-// destination from the TxID, stamps PrevSeq/CurSeq for BRC-124/BRC-128 frames, and
+// destination from the TxID, stamps HashKey/SeqNum for BRC-124/BRC-128 frames, and
 type Forwarder struct {
 	engine     *shard.Engine
 	mcPrefix   uint16
@@ -71,7 +69,7 @@ type Forwarder struct {
 	log        *slog.Logger
 
 	mu     sync.Mutex
-	chains map[chainKey]*chainState
+	chains map[chainKey]*flowState
 }
 
 // New creates a Forwarder. No sockets are opened here; call [OpenTargets] in
@@ -92,7 +90,7 @@ func New(engine *shard.Engine, mcPrefix uint16, mcGroupID uint16, egressPort int
 		debug:      debug,
 		rec:        rec,
 		log:        slog.Default().With("component", "forwarder"),
-		chains:     make(map[chainKey]*chainState),
+		chains:     make(map[chainKey]*flowState),
 	}
 }
 
@@ -138,14 +136,13 @@ func closeTargets(targets []Target, log *slog.Logger) {
 	}
 }
 
-// Process is the hot path: decode raw for routing, conditionally stamp PrevSeq/CurSeq, then forward.
+// Process is the hot path: decode raw for routing, conditionally stamp HashKey/SeqNum, then forward.
 //
-// For BRC-124/BRC-128 frames: if raw[48:56] (CurSeq) is non-zero the sender has
-// pre-stamped the frame and it is forwarded verbatim. If CurSeq is zero the
-// proxy stamps raw[40:48] (PrevSeq) and raw[48:56] (CurSeq) in-place using
-// seqhash and a per-(sender, group, subtree) monotonic counter so each
-// subtree owns an independent chain (BRC-124 §1.2).
-// BRC-12 frames are always forwarded verbatim. workerID is used only for metrics labels.
+// For BRC-124/BRC-128 frames: if raw[48:56] (SeqNum) is non-zero the sender has
+// pre-stamped the frame and it is forwarded verbatim. If SeqNum is zero the
+// proxy stamps raw[40:48] (HashKey) and raw[48:56] (SeqNum) in-place: HashKey is
+// stable per (sender, group, subtree) flow; SeqNum is a per-flow monotonic counter
+// starting at 1. BRC-12 frames are always forwarded verbatim. workerID is used only for metrics labels.
 func (fw *Forwarder) Process(targets []Target, raw []byte, src net.Addr, workerID int) {
 	f, err := frame.Decode(raw)
 	if err != nil {
@@ -161,9 +158,9 @@ func (fw *Forwarder) Process(targets []Target, raw []byte, src net.Addr, workerI
 	if f.Version == frame.FrameVerV2 && src != nil {
 		if binary.BigEndian.Uint64(raw[48:56]) == 0 {
 			ip := addrToIPv6(src)
-			prevSeq, curSeq := fw.nextSeq(ip, groupIdx, f.SubtreeID)
-			binary.BigEndian.PutUint64(raw[40:48], prevSeq)
-			binary.BigEndian.PutUint64(raw[48:56], curSeq)
+			hashKey, seqNum := fw.nextSeq(ip, groupIdx, f.SubtreeID)
+			binary.BigEndian.PutUint64(raw[40:48], hashKey)
+			binary.BigEndian.PutUint64(raw[48:56], seqNum)
 		}
 	}
 
@@ -237,22 +234,22 @@ func ctrlGroupName(idx uint16) string {
 	}
 }
 
-// nextSeq returns (prevSeq, curSeq) for the given (sender IP, group, subtree)
-// triple, advancing the per-chain monotonic counter atomically.
-func (fw *Forwarder) nextSeq(ip [16]byte, groupIdx uint32, subtreeID [32]byte) (prevSeq, curSeq uint64) {
+// nextSeq returns (hashKey, seqNum) for the given (sender IP, group, subtree) flow.
+// hashKey is stable (same for every frame in the flow); seqNum is monotonically
+// incremented per frame.
+func (fw *Forwarder) nextSeq(ip [16]byte, groupIdx uint32, subtreeID [32]byte) (hashKey, seqNum uint64) {
 	key := chainKey{ip: ip, grp: groupIdx, sub: subtreeID}
 	fw.mu.Lock()
 	st, ok := fw.chains[key]
 	if !ok {
-		st = &chainState{}
+		st = &flowState{}
 		fw.chains[key] = st
 	}
 	st.counter++
-	prevSeq = st.curSeq
-	st.curSeq = seqhash.Hash(ip, groupIdx, subtreeID, st.counter)
-	curSeq = st.curSeq
+	hashKey = seqhash.Hash(ip, groupIdx, subtreeID)
+	seqNum = st.counter
 	fw.mu.Unlock()
-	return prevSeq, curSeq
+	return hashKey, seqNum
 }
 
 // openEgressSocket opens a UDP6 socket with IPV6_MULTICAST_IF set to iface

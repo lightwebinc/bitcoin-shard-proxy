@@ -50,10 +50,10 @@ func buildV2Frame(t *testing.T, txidByte0 byte, curSeq uint64, payload []byte) [
 	return buildV2FrameSub(t, txidByte0, curSeq, [32]byte{}, payload)
 }
 
-func buildV2FrameSub(t *testing.T, txidByte0 byte, curSeq uint64, sub [32]byte, payload []byte) []byte {
+func buildV2FrameSub(t *testing.T, txidByte0 byte, seqNum uint64, sub [32]byte, payload []byte) []byte {
 	t.Helper()
 	f := &frame.Frame{
-		CurSeq:    curSeq,
+		SeqNum:    seqNum,
 		SubtreeID: sub,
 		Payload:   payload,
 	}
@@ -83,40 +83,40 @@ func makeForwarder() *Forwarder {
 	return New(engine, 0xFF05, shard.DefaultGroupID, 9001, false, nil)
 }
 
-// ── PrevSeq/CurSeq stamping ───────────────────────────────────────────────────
+// ── HashKey/SeqNum stamping ───────────────────────────────────────────────────
 
-func TestProcessV2_StampsSeqChain(t *testing.T) {
+func TestProcessV2_StampsHashKeyAndSeqNum(t *testing.T) {
 	fw := makeForwarder()
 	src := &net.UDPAddr{IP: net.ParseIP("::1"), Port: 12345}
 
-	// First frame: PrevSeq should be 0 (no predecessor), CurSeq must be non-zero.
+	// First frame: HashKey must be non-zero, SeqNum must be 1.
 	raw1 := buildV2Frame(t, 0xAB, 0, []byte("p1"))
 	fw.Process(nil, raw1, src, 0)
 
-	prevAfter1 := binary.BigEndian.Uint64(raw1[40:48])
-	curAfter1 := binary.BigEndian.Uint64(raw1[48:56])
-	if prevAfter1 != 0 {
-		t.Errorf("frame 1: PrevSeq = %d, want 0 (first in chain)", prevAfter1)
+	hashKey1 := binary.BigEndian.Uint64(raw1[40:48])
+	seqNum1 := binary.BigEndian.Uint64(raw1[48:56])
+	if hashKey1 == 0 {
+		t.Errorf("frame 1: HashKey = 0 after stamping, want non-zero")
 	}
-	if curAfter1 == 0 {
-		t.Errorf("frame 1: CurSeq = 0 after stamping, want non-zero")
+	if seqNum1 != 1 {
+		t.Errorf("frame 1: SeqNum = %d, want 1", seqNum1)
 	}
 
-	// Second frame from same (sender, group): PrevSeq must equal first CurSeq.
+	// Second frame from same (sender, group): same HashKey, SeqNum increments to 2.
 	raw2 := buildV2Frame(t, 0xAB, 0, []byte("p2"))
 	fw.Process(nil, raw2, src, 0)
 
-	prevAfter2 := binary.BigEndian.Uint64(raw2[40:48])
-	curAfter2 := binary.BigEndian.Uint64(raw2[48:56])
-	if prevAfter2 != curAfter1 {
-		t.Errorf("frame 2: PrevSeq = %d, want %d (frame 1 CurSeq)", prevAfter2, curAfter1)
+	hashKey2 := binary.BigEndian.Uint64(raw2[40:48])
+	seqNum2 := binary.BigEndian.Uint64(raw2[48:56])
+	if hashKey2 != hashKey1 {
+		t.Errorf("frame 2: HashKey = %d, want %d (stable per flow)", hashKey2, hashKey1)
 	}
-	if curAfter2 == 0 || curAfter2 == curAfter1 {
-		t.Errorf("frame 2: CurSeq = %d, want distinct non-zero value", curAfter2)
+	if seqNum2 != 2 {
+		t.Errorf("frame 2: SeqNum = %d, want 2", seqNum2)
 	}
 }
 
-func TestProcessV2_DifferentSenders_IndependentChains(t *testing.T) {
+func TestProcessV2_DifferentSenders_IndependentFlows(t *testing.T) {
 	fw := makeForwarder()
 	src1 := &net.UDPAddr{IP: net.ParseIP("::1"), Port: 1}
 	src2 := &net.UDPAddr{IP: net.ParseIP("::2"), Port: 2}
@@ -126,21 +126,21 @@ func TestProcessV2_DifferentSenders_IndependentChains(t *testing.T) {
 	fw.Process(nil, raw1, src1, 0)
 	fw.Process(nil, raw2, src2, 0)
 
-	// Both chains start fresh: both PrevSeq == 0.
-	prev1 := binary.BigEndian.Uint64(raw1[40:48])
-	prev2 := binary.BigEndian.Uint64(raw2[40:48])
-	if prev1 != 0 || prev2 != 0 {
-		t.Errorf("sender1 PrevSeq=%d sender2 PrevSeq=%d, both want 0 (fresh chains)", prev1, prev2)
+	// Both flows start at SeqNum=1.
+	seq1 := binary.BigEndian.Uint64(raw1[48:56])
+	seq2 := binary.BigEndian.Uint64(raw2[48:56])
+	if seq1 != 1 || seq2 != 1 {
+		t.Errorf("sender1 SeqNum=%d sender2 SeqNum=%d, both want 1 (fresh flows)", seq1, seq2)
 	}
-	// CurSeqs will differ because the IP inputs to the hash differ.
-	cur1 := binary.BigEndian.Uint64(raw1[48:56])
-	cur2 := binary.BigEndian.Uint64(raw2[48:56])
-	if cur1 == cur2 {
-		t.Errorf("CurSeq for distinct senders should differ, both got %d", cur1)
+	// HashKeys differ because the sender IP inputs differ.
+	hk1 := binary.BigEndian.Uint64(raw1[40:48])
+	hk2 := binary.BigEndian.Uint64(raw2[40:48])
+	if hk1 == hk2 {
+		t.Errorf("HashKey for distinct senders should differ, both got %d", hk1)
 	}
 }
 
-func TestProcessV2_DistinctSubtrees_IndependentChains(t *testing.T) {
+func TestProcessV2_DistinctSubtrees_IndependentFlows(t *testing.T) {
 	fw := makeForwarder()
 	src := &net.UDPAddr{IP: net.ParseIP("::1"), Port: 1}
 
@@ -149,8 +149,7 @@ func TestProcessV2_DistinctSubtrees_IndependentChains(t *testing.T) {
 	subB[0] = 0xBB
 
 	// Interleave two subtree streams under the same (sender, group). Each
-	// subtree must run an independent chain — both PrevSeq values for the
-	// FIRST frame of each subtree must be 0.
+	// subtree must be an independent flow with its own HashKey and SeqNum.
 	rawA1 := buildV2FrameSub(t, 0xAB, 0, subA, nil)
 	rawB1 := buildV2FrameSub(t, 0xAB, 0, subB, nil)
 	rawA2 := buildV2FrameSub(t, 0xAB, 0, subA, nil)
@@ -158,23 +157,27 @@ func TestProcessV2_DistinctSubtrees_IndependentChains(t *testing.T) {
 	fw.Process(nil, rawB1, src, 0)
 	fw.Process(nil, rawA2, src, 0)
 
-	prevA1 := binary.BigEndian.Uint64(rawA1[40:48])
-	prevB1 := binary.BigEndian.Uint64(rawB1[40:48])
-	curA1 := binary.BigEndian.Uint64(rawA1[48:56])
-	prevA2 := binary.BigEndian.Uint64(rawA2[40:48])
-	curB1 := binary.BigEndian.Uint64(rawB1[48:56])
+	hkA1 := binary.BigEndian.Uint64(rawA1[40:48])
+	hkB1 := binary.BigEndian.Uint64(rawB1[40:48])
+	hkA2 := binary.BigEndian.Uint64(rawA2[40:48])
+	seqA1 := binary.BigEndian.Uint64(rawA1[48:56])
+	seqB1 := binary.BigEndian.Uint64(rawB1[48:56])
+	seqA2 := binary.BigEndian.Uint64(rawA2[48:56])
 
-	if prevA1 != 0 {
-		t.Errorf("subtree A frame 1: PrevSeq = %d, want 0", prevA1)
+	if hkA1 != hkA2 {
+		t.Errorf("subtree A: HashKey changed between frames (%x != %x)", hkA1, hkA2)
 	}
-	if prevB1 != 0 {
-		t.Errorf("subtree B frame 1: PrevSeq = %d, want 0 (independent chain)", prevB1)
+	if hkA1 == hkB1 {
+		t.Errorf("subtree A and B share HashKey %x — flows are not isolated", hkA1)
 	}
-	if prevA2 != curA1 {
-		t.Errorf("subtree A frame 2: PrevSeq = %d, want %d (chain to A frame 1, not B)", prevA2, curA1)
+	if seqA1 != 1 {
+		t.Errorf("subtree A frame 1: SeqNum = %d, want 1", seqA1)
 	}
-	if curA1 == curB1 {
-		t.Errorf("subtree A and B share CurSeq %d — chains are not isolated", curA1)
+	if seqB1 != 1 {
+		t.Errorf("subtree B frame 1: SeqNum = %d, want 1 (independent flow)", seqB1)
+	}
+	if seqA2 != 2 {
+		t.Errorf("subtree A frame 2: SeqNum = %d, want 2", seqA2)
 	}
 }
 
@@ -198,9 +201,9 @@ func TestProcessV2_NilSrc_NotStamped(t *testing.T) {
 	raw := buildV2Frame(t, 0xAB, 0xDEAD, nil)
 	// With src==nil the stamping branch is skipped; bytes must remain unchanged.
 	fw.Process(nil, raw, nil, 0)
-	curAfter := binary.BigEndian.Uint64(raw[48:56])
-	if curAfter != 0xDEAD {
-		t.Errorf("nil src: CurSeq = %d, want 0xDEAD (unchanged)", curAfter)
+	seqAfter := binary.BigEndian.Uint64(raw[48:56])
+	if seqAfter != 0xDEAD {
+		t.Errorf("nil src: SeqNum = %d, want 0xDEAD (unchanged)", seqAfter)
 	}
 }
 
