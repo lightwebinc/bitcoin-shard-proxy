@@ -457,6 +457,157 @@ func (fw *Forwarder) fragmentBlock(targets []Target, raw []byte, bf *frame.Block
 	}
 }
 
+// ProcessSubtreeData handles BRC-132 subtree data frames (FrameVer 0x05).
+// It validates the frame, stamps HashKey/SeqNum per (sender, 0xFFFB, subtreeID)
+// flow, optionally fragments large payloads via BRC-130, and forwards to the
+// CtrlGroupSubtreeAnnounce multicast group.
+func (fw *Forwarder) ProcessSubtreeData(targets []Target, raw []byte, src net.Addr, workerID int) {
+	sf, err := frame.DecodeSubtreeData(raw)
+	if err != nil {
+		fw.log.Debug("subtree data frame decode error", "err", err, "len", len(raw))
+		if fw.rec != nil && len(targets) > 0 {
+			fw.rec.PacketDropped(targets[0].Iface.Name, workerID, "decode_error")
+		}
+		return
+	}
+
+	if src != nil {
+		ip := addrToIPv6(src)
+		ctrlIdx := uint32(shard.CtrlGroupSubtreeAnnounce)
+
+		// BRC-130 fragmentation path for large subtree data payloads.
+		if fw.fragDataSize > 0 && len(sf.Payload) > fw.fragDataSize {
+			fw.fragmentSubtreeData(targets, raw, sf, ip, ctrlIdx, workerID)
+			return
+		}
+
+		// Stamp HashKey/SeqNum in-place if not pre-stamped.
+		// SubtreeID is read from bytes 8–39 (the ContentID slot).
+		if binary.BigEndian.Uint64(raw[48:56]) == 0 {
+			hashKey, seqNum := fw.nextSeq(ip, ctrlIdx, sf.SubtreeID)
+			binary.BigEndian.PutUint64(raw[40:48], hashKey)
+			binary.BigEndian.PutUint64(raw[48:56], seqNum)
+		}
+	}
+
+	dst := shard.ControlGroupAddr(fw.mcPrefix, fw.mcGroupID, shard.CtrlGroupSubtreeAnnounce)
+	addr := &net.UDPAddr{IP: dst, Port: fw.egressPort}
+
+	for _, tgt := range targets {
+		addr.Zone = tgt.Iface.Name
+		if _, err := tgt.Conn.WriteTo(raw, addr); err != nil {
+			fw.log.Warn("WriteTo subtree data error", "iface", tgt.Iface.Name, "dst", addr, "err", err)
+			if fw.rec != nil {
+				fw.rec.PacketDropped(tgt.Iface.Name, workerID, "write_error")
+				fw.rec.EgressError(tgt.Iface.Name, workerID)
+			}
+			continue
+		}
+		if fw.rec != nil {
+			fw.rec.ControlFrameForwarded("subtree_data")
+		}
+	}
+
+	if fw.debug {
+		fw.log.Debug("subtree data forwarded",
+			"msg_type", sf.MsgType,
+			"subtree_id", fmt.Sprintf("%x", sf.SubtreeID[:8]),
+			"dst", addr,
+		)
+	}
+}
+
+// fragmentSubtreeData splits a large BRC-132 subtree data payload into BRC-130
+// fragments and forwards each to the CtrlGroupSubtreeAnnounce group.
+// Each fragment receives OrigFrameVer=0x05 so that reassembly routes the
+// completed payload to processSubtreeDataFrame on the listener.
+// MsgType is preserved in byte 7 of each fragment datagram.
+func (fw *Forwarder) fragmentSubtreeData(targets []Target, raw []byte, sf *frame.SubtreeDataFrame, ip [16]byte, ctrlIdx uint32, workerID int) {
+	payload := sf.Payload
+	origLen := uint32(len(payload))
+	dataSize := fw.fragDataSize
+
+	k := (len(payload) + dataSize - 1) / dataSize
+	if k > 65535 {
+		fw.log.Warn("subtree data fragment count exceeds 65535, dropping frame",
+			"subtree_id", fmt.Sprintf("%x", sf.SubtreeID[:8]),
+			"payload_len", len(payload),
+		)
+		if fw.rec != nil {
+			fw.rec.PacketDropped("", workerID, "frag_overflow")
+		}
+		return
+	}
+	if fw.rec != nil {
+		fw.rec.FrameFragmented(workerID, k)
+	}
+
+	// SubtreeID goes into both the TxID slot and the SubtreeID slot of
+	// the BRC-130 fragment header so that reassembly and gap-tracking
+	// both read the correct identifier.
+	var zeroSub [32]byte
+
+	fragTotal := uint16(k)
+	dst := shard.ControlGroupAddr(fw.mcPrefix, fw.mcGroupID, shard.CtrlGroupSubtreeAnnounce)
+	addr := &net.UDPAddr{IP: dst, Port: fw.egressPort}
+	buf := make([]byte, frame.HeaderSizeV3+dataSize)
+
+	for i := 0; i < k; i++ {
+		start := i * dataSize
+		end := start + dataSize
+		if end > len(payload) {
+			end = len(payload)
+		}
+		fragData := payload[start:end]
+
+		hashKey, seqNum := fw.nextSeq(ip, ctrlIdx, sf.SubtreeID)
+
+		n, err := frame.EncodeFragment(
+			buf,
+			sf.SubtreeID, // TxID slot: SubtreeID (reassembly key)
+			zeroSub,      // SubtreeID slot: zeros (LayoutPad32 convention)
+			hashKey,
+			seqNum,
+			origLen,
+			uint16(i),
+			fragTotal,
+			frame.FrameVerV5, // OrigFrameVer: V5 subtree data
+			fragData,
+		)
+		if err != nil {
+			fw.log.Error("EncodeFragment subtree data error", "err", err)
+			continue
+		}
+
+		// Write MsgType into byte 7 so the reassembler can reconstruct
+		// the full V5 header (same pattern as fragmentBlock / BRC-131).
+		buf[7] = raw[7]
+
+		for _, tgt := range targets {
+			addr.Zone = tgt.Iface.Name
+			if _, werr := tgt.Conn.WriteTo(buf[:n], addr); werr != nil {
+				fw.log.Warn("WriteTo subtree data fragment error", "iface", tgt.Iface.Name, "dst", addr, "err", werr)
+				if fw.rec != nil {
+					fw.rec.PacketDropped(tgt.Iface.Name, workerID, "write_error")
+					fw.rec.EgressError(tgt.Iface.Name, workerID)
+				}
+				continue
+			}
+			if fw.rec != nil {
+				fw.rec.ControlFrameForwarded("subtree_data")
+			}
+		}
+	}
+
+	if fw.debug {
+		fw.log.Debug("subtree data fragmented",
+			"subtree_id", fmt.Sprintf("%x", sf.SubtreeID[:8]),
+			"fragments", k,
+			"payload_len", origLen,
+		)
+	}
+}
+
 // EgressPort returns the configured UDP destination port for multicast egress.
 func (fw *Forwarder) EgressPort() int { return fw.egressPort }
 
