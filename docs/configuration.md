@@ -22,6 +22,7 @@ as fallbacks; hard-coded defaults apply when neither is present.
 | `-instance` | `INSTANCE_ID` | hostname | OTel `service.instance.id` for federation |  |  |  |
 | `-otlp-endpoint` | `OTLP_ENDPOINT` | `""` | OTLP gRPC endpoint (empty = disabled) |  |  |  |
 | `-otlp-interval` | `OTLP_INTERVAL` | `30s` | OTLP push interval |  |  |  |
+| `-frag-mtu` | `FRAG_MTU` | `0` | Path MTU for BRC-130 fragmentation (0 = disabled) |  |  |  |
 
 ---
 
