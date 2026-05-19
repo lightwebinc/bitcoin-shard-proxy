@@ -40,6 +40,7 @@ func main() {
 	spread := flag.Bool("spread", false, "send one frame per group per cycle with maximally-spaced txids; -count sets cycles (0 = infinite)")
 	fragMTU := flag.Int("frag-mtu", 0, "if >0, split each frame payload into BRC-130 fragments using this path MTU")
 	payloadSize := flag.Int("payload-size", 28, "payload size in bytes")
+	blockAnnounce := flag.Bool("block-announce", false, "send BRC-131 BlockAnnounce frames instead of BRC-124 transaction frames")
 	flag.Parse()
 
 	conn, err := net.Dial("udp6", *addr)
@@ -63,6 +64,49 @@ func main() {
 	fragDataSize := 0
 	if *fragMTU > ipv6UDPOverhead {
 		fragDataSize = *fragMTU - ipv6UDPOverhead
+	}
+
+	// BRC-131 BlockAnnounce mode: send block control frames instead of tx frames.
+	if *blockAnnounce {
+		fmt.Printf("sending BRC-131 BlockAnnounce to %s  count=%d\n\n", *addr, *count)
+		for i := 0; *count == 0 || i < *count; i++ {
+			// Build a minimal BlockAnnounce payload: 80B header + 32B coinbase + 4B subtree count.
+			var blockHeader [80]byte
+			binary.BigEndian.PutUint32(blockHeader[0:4], 0x20000000)  // version
+			binary.BigEndian.PutUint32(blockHeader[76:80], uint32(i)) // nonce = sequence
+			var coinbaseTxID [32]byte
+			coinbaseTxID[0] = byte(i)
+			announce := &frame.BlockAnnouncePayload{
+				Header:       blockHeader,
+				CoinbaseTxID: coinbaseTxID,
+			}
+			announceBuf := frame.EncodeBlockAnnounce(announce)
+
+			// ContentID = SHA256d of block header (simulated block hash).
+			contentID := sha256dOf(blockHeader[:])
+
+			bf := &frame.BlockFrame{
+				MsgType:   frame.BlockMsgAnnounce,
+				ContentID: contentID,
+				HashKey:   0xDEADBEEF01020304,
+				SeqNum:    uint64(i + 1),
+				Payload:   announceBuf,
+			}
+			buf := make([]byte, frame.HeaderSize+len(announceBuf))
+			n, err := frame.EncodeBlock(bf, buf)
+			if err != nil {
+				log.Fatalf("EncodeBlock %d: %v", i, err)
+			}
+			if _, err := conn.Write(buf[:n]); err != nil {
+				log.Fatalf("send block frame %d: %v", i, err)
+			}
+			fmt.Printf("block-announce %d  contentID=%08X  payload=%d bytes\n",
+				i, binary.BigEndian.Uint32(contentID[0:4]), len(announceBuf))
+			if interval > 0 && (*count == 0 || i < *count-1) {
+				time.Sleep(interval)
+			}
+		}
+		return
 	}
 
 	fmt.Printf("sending to %s  shard_bits=%d  spread=%v  frag_mtu=%d\n\n",
